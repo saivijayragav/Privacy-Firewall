@@ -13,6 +13,16 @@ dependencies = [
   "presidio-analyzer>=2.2.355",
 ]
 
+[project.optional-dependencies]
+media = [
+  "pymupdf>=1.24.0",
+  "opencv-python>=4.10.0",
+  "pytesseract>=0.3.13",
+  "pillow>=10.4.0",
+  "faster-whisper>=1.0.3",
+  "pydub>=0.25.1",
+]
+
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"

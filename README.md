@@ -344,3 +344,118 @@ It can operate as:
 
 The intelligence lies not in blurring —  
 but in deciding *when*, *what*, and *whether* to blur.
+
+---
+
+# 🛠 Implementation Status (Initial Build)
+
+An initial working backend scaffold is now implemented in this repository with:
+
+- FastAPI service and versioned API routes
+- Multi-modal ingestion endpoints (`document`, `image`, `audio`)
+- Deterministic PII detection (Presidio + custom recognizers)
+- Contextual classification engine with AIPipe OpenAI-compatible `/responses` integration
+- Risk scoring + mode-based decision engine
+- Redaction planning + execution pipeline (PDF/Image/Audio)
+- Structured output with audit logs and reasoning trace
+
+Current code structure:
+
+```
+app/
+  api/
+    dependencies.py
+    routes.py
+  domain/
+    contracts.py
+    models.py
+  services/
+    contextual.py
+    decisioning.py
+    detectors.py
+    extractors.py
+    pipeline.py
+    redaction.py
+  main.py
+  settings.py
+```
+
+---
+
+# ▶️ Quick Start
+
+## 1) Install dependencies
+
+```bash
+pip install -e .
+```
+
+## 2) Configure environment variables
+
+Create `.env` in project root:
+
+```env
+APP_NAME=Privacy Firewall Core Engine
+APP_VERSION=0.1.0
+DEBUG=false
+
+AIPIPE_BASE_URL=https://aipipe.org
+AIPIPE_TOKEN=your_token_here
+AIPIPE_MODEL=gpt-5-nano
+
+DEFAULT_MODE=warn
+AUTO_REDACT_THRESHOLD=0.65
+```
+
+If `AIPIPE_TOKEN` is missing, contextual classification falls back to heuristics.
+
+## 3) Run API server
+
+```bash
+uvicorn app.main:app --reload
+```
+
+Health endpoint:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+---
+
+# 🔌 API Endpoints
+
+- `POST /api/v1/process/document`
+- `POST /api/v1/process/image`
+- `POST /api/v1/process/audio`
+
+Supported form fields:
+
+- `file` (required)
+- `mode`: `flag | warn | auto_redact | policy`
+- `apply_redaction`: `true/false`
+- `score_threshold`: float in `[0,1]`
+- `policy_json`: JSON string (for policy mode)
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/process/document \
+  -F "file=@sample.pdf" \
+  -F "mode=warn" \
+  -F "apply_redaction=false"
+```
+
+---
+
+# 📦 Optional Runtime Dependencies
+
+Some features rely on optional libraries/tools:
+
+- PDF extraction/redaction: `PyMuPDF` (`fitz`)
+- Image OCR: `pytesseract` + system `tesseract`
+- Face detection: `opencv-python`
+- Audio transcription: `faster-whisper`
+- Audio redaction: `pydub` (+ ffmpeg for many formats)
+
+Without these, the engine still runs with partial functionality and graceful fallbacks.
