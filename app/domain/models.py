@@ -84,3 +84,68 @@ class ProcessingResponse(BaseModel):
     audit_log: list[AuditEvent]
     reasoning_trace: list[str]
     output_file_path: str | None = None
+    object_store_key: str | None = None
+    download_url: str | None = None
+
+
+# ────────────────────────────────────────────────────────────────────
+# Two-phase scan → redact models
+# ────────────────────────────────────────────────────────────────────
+
+
+class ScanResponse(BaseModel):
+    """Returned by /scan/* endpoints.  No file mutation happens here."""
+
+    scan_id: str
+    flagged_entities: list[FlaggedEntity]
+    risk_score: float
+    warning_message: str | None = None
+    recommended_redaction_plan: RedactionPlan | None = None
+    audit_log: list[AuditEvent]
+    reasoning_trace: list[str]
+
+
+class ManualRegion(BaseModel):
+    """A user-drawn region to include in redaction."""
+
+    bbox: list[float]
+    page: int = 1
+    label: str | None = None
+
+
+class RedactRequest(BaseModel):
+    """Sent by the client after reviewing the scan result."""
+
+    scan_id: str
+    approved_region_ids: list[str] = Field(
+        default_factory=list,
+        description="Entity IDs from the redaction plan that the user approved.",
+    )
+    manual_regions: list[ManualRegion] = Field(
+        default_factory=list,
+        description="Extra regions the user drew on the preview.",
+    )
+
+
+class RegionDetectRequest(BaseModel):
+    """Ask the backend to detect entities inside a user-drawn bbox."""
+
+    scan_id: str
+    bbox: list[float] = Field(..., min_length=4, max_length=4)
+    page: int = 1
+
+
+class RegionDetectResponse(BaseModel):
+    """Entities found inside the user-drawn crop region."""
+
+    entities: list[DetectedEntity]
+
+
+class RedactResponse(BaseModel):
+    """Returned by POST /redact after applying approved redactions."""
+
+    status: str
+    object_key: str | None = None
+    download_url: str | None = None
+    filename: str | None = None
+    local_path: str | None = None

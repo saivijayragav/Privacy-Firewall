@@ -7,8 +7,10 @@ from app.services.contextual import ContextualIntelligenceService
 from app.services.decisioning import DecisionEngine, RiskScoringService
 from app.services.detectors import EntityDetector
 from app.services.extractors import SignalExtractor
+from app.services.object_store import R2ObjectStore
 from app.services.pipeline import PrivacyFirewallPipeline
 from app.services.redaction import RedactionService
+from app.services.scan_store import ScanStore
 from app.settings import get_settings
 
 
@@ -25,6 +27,13 @@ def get_pipeline() -> PrivacyFirewallPipeline:
     scorer = RiskScoringService()
     decision = DecisionEngine(default_threshold=settings.auto_redact_threshold)
     redaction = RedactionService()
+    scan_store = ScanStore(ttl_seconds=1800)  # 30-minute TTL
+    object_store = R2ObjectStore(
+        endpoint_url=settings.r2_endpoint_url,
+        access_key_id=settings.cloudflare_access_id,
+        secret_access_key=settings.cloudflare_secret_access_key,
+        bucket_name=settings.cloudflare_bucket,
+    )
 
     return PrivacyFirewallPipeline(
         extractor=extractor,
@@ -34,4 +43,6 @@ def get_pipeline() -> PrivacyFirewallPipeline:
         decision_engine=decision,
         redaction=redaction,
         output_dir=output_dir,
+        scan_store=scan_store,
+        object_store=object_store,
     )
