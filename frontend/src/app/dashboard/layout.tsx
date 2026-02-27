@@ -3,12 +3,21 @@
 import { signOut, useSession } from "@/lib/auth-client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import {
+  ShieldIcon,
+  UploadIcon,
+  ClipboardIcon,
+  SettingsIcon,
+  LogOutIcon,
+  MenuIcon,
+  XIcon,
+} from "@/components/Icons";
 
 const NAV_ITEMS = [
-  { href: "/dashboard", icon: "📤", label: "Upload & Scan" },
-  { href: "/dashboard/history", icon: "📋", label: "Scan History" },
-  { href: "/dashboard/policy", icon: "⚙️", label: "Policy Builder" },
+  { href: "/dashboard", icon: <UploadIcon size={18} />, label: "Upload & Scan" },
+  { href: "/dashboard/history", icon: <ClipboardIcon size={18} />, label: "Scan History" },
+  { href: "/dashboard/policy", icon: <SettingsIcon size={18} />, label: "Policy Builder" },
 ];
 
 export default function DashboardLayout({
@@ -19,12 +28,19 @@ export default function DashboardLayout({
   const { data: session, isPending } = useSession();
   const router = useRouter();
   const pathname = usePathname();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
-    if (!isPending && !session) {
+    if (!isPending && !session && !loggingOut) {
       router.replace("/auth/signin");
     }
-  }, [session, isPending, router]);
+  }, [session, isPending, router, loggingOut]);
+
+  // Close sidebar on route change (mobile)
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [pathname]);
 
   if (isPending) {
     return (
@@ -44,11 +60,23 @@ export default function DashboardLayout({
       .toUpperCase()
       .slice(0, 2) || "U";
 
+  const handleSignOut = async () => {
+    setLoggingOut(true);
+    await signOut();
+    router.push("/");
+  };
+
   return (
     <div className="dashboard-layout">
-      <aside className="sidebar">
+      {/* Mobile overlay */}
+      <div
+        className={`sidebar-overlay ${sidebarOpen ? "open" : ""}`}
+        onClick={() => setSidebarOpen(false)}
+      />
+
+      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-logo">
-          <div className="icon">🛡️</div>
+          <div className="icon"><ShieldIcon size={20} color="#0EA5E9" /></div>
           <h1>PixelGuard</h1>
         </div>
 
@@ -74,17 +102,33 @@ export default function DashboardLayout({
           <button
             className="logout-btn"
             title="Sign out"
-            onClick={async () => {
-              await signOut();
-              router.push("/auth/signin");
-            }}
+            onClick={handleSignOut}
           >
-            🚪
+            <LogOutIcon size={16} />
           </button>
         </div>
       </aside>
 
-      <main className="main-content fade-in">{children}</main>
+      <main className="main-content fade-in">
+        {/* Dashboard Header */}
+        <div className="dashboard-header">
+          <div className="dashboard-header-left">
+            <button
+              className="mobile-menu-btn"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+            >
+              {sidebarOpen ? <XIcon size={20} /> : <MenuIcon size={20} />}
+            </button>
+          </div>
+          <div className="dashboard-header-right">
+            <button className="header-signout-btn" onClick={handleSignOut}>
+              <LogOutIcon size={16} />
+              Sign Out
+            </button>
+          </div>
+        </div>
+        {children}
+      </main>
     </div>
   );
 }

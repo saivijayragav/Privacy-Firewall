@@ -2,6 +2,31 @@
 
 import { useSession } from "@/lib/auth-client";
 import Link from "next/link";
+import dynamic from "next/dynamic";
+import {
+  ShieldIcon,
+  LockIcon,
+  CameraIcon,
+  FileTextIcon,
+  MicIcon,
+  BrainIcon,
+  SettingsIcon,
+  ClipboardIcon,
+  RocketIcon,
+  FlagModeIcon,
+  WarnModeIcon,
+  RedactModeIcon,
+  PolicyModeIcon,
+} from "@/components/Icons";
+
+const ShieldModel = dynamic(() => import("@/components/ShieldModel"), {
+  ssr: false,
+  loading: () => (
+    <div className="shield-model-container shield-model-loading">
+      <div className="shield-model-placeholder" />
+    </div>
+  ),
+});
 
 export default function HomePage() {
   const { data: session } = useSession();
@@ -12,7 +37,7 @@ export default function HomePage() {
       <nav className="landing-nav">
         <div className="landing-nav-inner">
           <div className="landing-logo">
-            <span className="landing-logo-icon">🛡️</span>
+            <span className="landing-logo-icon"><ShieldIcon size={22} color="#0EA5E9" /></span>
             <span className="landing-logo-text">PixelGuard</span>
           </div>
           <div className="landing-nav-links">
@@ -38,35 +63,40 @@ export default function HomePage() {
       <section className="hero">
         <div className="hero-glow" />
         <div className="hero-glow-2" />
-        <div className="hero-content fade-in">
-          <div className="hero-badge">
-            <span>🔒</span> AI-Powered Privacy Engine
+        <div className="hero-split">
+          <div className="hero-content fade-in">
+            <div className="hero-badge">
+              <LockIcon size={16} /> AI-Powered Privacy Engine
+            </div>
+            <h1 className="hero-title">
+              Protect Sensitive Data
+              <br />
+              <span className="hero-gradient">Before It Leaks</span>
+            </h1>
+            <p className="hero-desc">
+              PixelGuard scans your images, documents, and audio for credit cards,
+              Aadhaar numbers, phone numbers, and more — then flags, warns, or
+              auto-redacts before you share.
+            </p>
+            <div className="hero-actions">
+              <Link
+                href={session ? "/dashboard" : "/auth/signup"}
+                className="btn btn-primary"
+                style={{ padding: "14px 36px", fontSize: 15 }}
+              >
+                <RocketIcon size={18} /> Start Scanning Free
+              </Link>
+              <a
+                href="#features"
+                className="btn btn-secondary"
+                style={{ padding: "14px 36px", fontSize: 15 }}
+              >
+                Learn More ↓
+              </a>
+            </div>
           </div>
-          <h1 className="hero-title">
-            Protect Sensitive Data
-            <br />
-            <span className="hero-gradient">Before It Leaks</span>
-          </h1>
-          <p className="hero-desc">
-            PixelGuard scans your images, documents, and audio for credit cards,
-            Aadhaar numbers, phone numbers, and more — then flags, warns, or
-            auto-redacts before you share.
-          </p>
-          <div className="hero-actions">
-            <Link
-              href={session ? "/dashboard" : "/auth/signup"}
-              className="btn btn-primary"
-              style={{ padding: "14px 36px", fontSize: 15 }}
-            >
-              🚀 Start Scanning Free
-            </Link>
-            <a
-              href="#features"
-              className="btn btn-secondary"
-              style={{ padding: "14px 36px", fontSize: 15 }}
-            >
-              Learn More ↓
-            </a>
+          <div className="hero-model">
+            <ShieldModel />
           </div>
         </div>
 
@@ -103,7 +133,7 @@ export default function HomePage() {
 
         <div className="features-grid">
           <div className="feature-card glass-card">
-            <div className="feature-icon">📸</div>
+            <div className="feature-icon"><CameraIcon size={32} color="#0EA5E9" /></div>
             <h3>Image Scanning</h3>
             <p>
               OCR-powered text extraction with face detection. Finds credit
@@ -111,7 +141,7 @@ export default function HomePage() {
             </p>
           </div>
           <div className="feature-card glass-card">
-            <div className="feature-icon">📄</div>
+            <div className="feature-icon"><FileTextIcon size={32} color="#0EA5E9" /></div>
             <h3>Document Analysis</h3>
             <p>
               Layout-aware PDF extraction. Detects Aadhaar, SSN, bank accounts,
@@ -119,7 +149,7 @@ export default function HomePage() {
             </p>
           </div>
           <div className="feature-card glass-card">
-            <div className="feature-icon">🎙️</div>
+            <div className="feature-icon"><MicIcon size={32} color="#0EA5E9" /></div>
             <h3>Audio Transcription</h3>
             <p>
               Whisper-powered speech-to-text. Flags PII spoken in voice
@@ -127,7 +157,7 @@ export default function HomePage() {
             </p>
           </div>
           <div className="feature-card glass-card">
-            <div className="feature-icon">🧠</div>
+            <div className="feature-icon"><BrainIcon size={32} color="#0EA5E9" /></div>
             <h3>AI Context Engine</h3>
             <p>
               LLM-powered classification distinguishes a credit card from a
@@ -135,7 +165,7 @@ export default function HomePage() {
             </p>
           </div>
           <div className="feature-card glass-card">
-            <div className="feature-icon">⚙️</div>
+            <div className="feature-icon"><SettingsIcon size={32} color="#0EA5E9" /></div>
             <h3>Policy Builder</h3>
             <p>
               Enterprise-grade rules: always redact credit cards, only flag
@@ -143,7 +173,7 @@ export default function HomePage() {
             </p>
           </div>
           <div className="feature-card glass-card">
-            <div className="feature-icon">📋</div>
+            <div className="feature-icon"><ClipboardIcon size={32} color="#0EA5E9" /></div>
             <h3>Audit Trail</h3>
             <p>
               Every decision is logged with stage-by-stage reasoning.
@@ -164,22 +194,22 @@ export default function HomePage() {
 
         <div className="modes-row">
           <div className="mode-card glass-card">
-            <span className="mode-card-icon">🟢</span>
+            <span className="mode-card-icon"><FlagModeIcon size={28} /></span>
             <h4>Flag Only</h4>
             <p>Detect & report sensitive items. No modifications.</p>
           </div>
           <div className="mode-card glass-card">
-            <span className="mode-card-icon">🟡</span>
+            <span className="mode-card-icon"><WarnModeIcon size={28} /></span>
             <h4>Warn & Recommend</h4>
             <p>Flag items and suggest what to redact.</p>
           </div>
           <div className="mode-card glass-card">
-            <span className="mode-card-icon">🔴</span>
+            <span className="mode-card-icon"><RedactModeIcon size={28} /></span>
             <h4>Auto Redact</h4>
             <p>Automatically mask, blur, or bleep sensitive content.</p>
           </div>
           <div className="mode-card glass-card">
-            <span className="mode-card-icon">⚫</span>
+            <span className="mode-card-icon"><PolicyModeIcon size={28} /></span>
             <h4>Policy Enforced</h4>
             <p>Enterprise rules for granular control.</p>
           </div>
@@ -199,7 +229,7 @@ export default function HomePage() {
             className="btn btn-primary"
             style={{ padding: "14px 40px", fontSize: 15 }}
           >
-            🛡️ Get Started — It&apos;s Free
+            <ShieldIcon size={18} /> Get Started — It&apos;s Free
           </Link>
         </div>
       </section>
@@ -207,7 +237,7 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="landing-footer">
         <div className="landing-logo">
-          <span className="landing-logo-icon">🛡️</span>
+          <span className="landing-logo-icon"><ShieldIcon size={22} color="#0EA5E9" /></span>
           <span className="landing-logo-text">PixelGuard</span>
         </div>
         <p>AI-powered privacy detection & redaction engine</p>

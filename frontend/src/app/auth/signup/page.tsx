@@ -4,6 +4,7 @@ import { authClient, signUp } from "@/lib/auth-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+import { ShieldIcon } from "@/components/Icons";
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -47,7 +48,7 @@ export default function SignUpPage() {
     <div className="auth-container">
       <div className="auth-card glass-card">
         <div className="logo">
-          <div className="icon">🛡️</div>
+          <div className="icon"><ShieldIcon size={24} color="white" /></div>
           <h1>PixelGuard</h1>
           <p>Create your account</p>
         </div>

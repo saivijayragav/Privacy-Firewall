@@ -2,6 +2,15 @@
 
 import { type ProcessingResponse } from "@/lib/api";
 import { useEffect, useState } from "react";
+import {
+  ImageIcon,
+  MusicIcon,
+  FileTextIcon,
+  ClipboardIcon,
+  TrashIcon,
+  AlertTriangleIcon,
+  ArrowLeftIcon,
+} from "@/components/Icons";
 
 interface HistoryItem {
   id: number;
@@ -27,10 +36,10 @@ function severityColor(score: number): string {
   return "var(--success)";
 }
 
-function mediaIcon(type: string): string {
-  if (type === "image") return "🖼️";
-  if (type === "audio") return "🎵";
-  return "📄";
+function mediaIcon(type: string): React.ReactNode {
+  if (type === "image") return <ImageIcon size={28} color="var(--accent)" />;
+  if (type === "audio") return <MusicIcon size={28} color="var(--accent)" />;
+  return <FileTextIcon size={28} color="var(--accent)" />;
 }
 
 export default function HistoryPage() {
@@ -57,14 +66,14 @@ export default function HistoryPage() {
         </div>
         {history.length > 0 && (
           <button className="btn btn-danger btn-sm" onClick={clearHistory}>
-            🗑️ Clear History
+            <TrashIcon size={14} /> Clear History
           </button>
         )}
       </div>
 
       {history.length === 0 ? (
         <div className="glass-card empty-state">
-          <div className="icon">📋</div>
+          <div className="icon"><ClipboardIcon size={48} color="var(--text-muted)" /></div>
           <h3>No Scans Yet</h3>
           <p>Upload and scan a file to see results here</p>
         </div>
@@ -105,7 +114,7 @@ export default function HistoryPage() {
             onClick={() => setSelected(null)}
             style={{ marginBottom: 20 }}
           >
-            ← Back to list
+            <ArrowLeftIcon size={14} /> Back to list
           </button>
 
           <div className="glass-card" style={{ padding: 24 }}>
@@ -140,7 +149,7 @@ export default function HistoryPage() {
               <div
                 className={`warning-banner ${selected.riskScore >= 0.7 ? "high" : "moderate"}`}
               >
-                ⚠️ {selected.result.warning_message}
+                <AlertTriangleIcon size={16} /> {selected.result.warning_message}
               </div>
             )}
 
@@ -185,7 +194,7 @@ export default function HistoryPage() {
             {selected.result.audit_log.length > 0 && (
               <div style={{ marginTop: 24 }}>
                 <h4 style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>
-                  📋 Audit Trail
+                  <ClipboardIcon size={14} /> Audit Trail
                 </h4>
                 <div className="audit-timeline">
                   {selected.result.audit_log.map((event, i) => (

@@ -1,6 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import {
+  RedactModeIcon,
+  CheckCircleIcon,
+  CopyIcon,
+  ClipboardIcon,
+  EditIcon,
+} from "@/components/Icons";
 
 const ALL_ENTITY_TYPES = [
   "credit_card",
@@ -61,13 +68,13 @@ export default function PolicyPage() {
         <p>Configure enterprise privacy policies for policy-driven mode</p>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+      <div className="policy-grid">
         <div>
           {/* Always redact */}
           <div className="glass-card" style={{ padding: 24, marginBottom: 20 }}>
             <div className="policy-section">
               <h4>
-                🔴 Always Redact
+                <RedactModeIcon size={16} /> Always Redact
                 <span
                   style={{
                     fontSize: 11,
@@ -100,7 +107,7 @@ export default function PolicyPage() {
           <div className="glass-card" style={{ padding: 24 }}>
             <div className="policy-section">
               <h4>
-                ⚪ Ignore
+                <svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#64748b" opacity="0.2" /><circle cx="12" cy="12" r="5" fill="#94A3B8" /></svg> Ignore
                 <span
                   style={{
                     fontSize: 11,
@@ -142,10 +149,10 @@ export default function PolicyPage() {
               }}
             >
               <h4 style={{ fontSize: 15, fontWeight: 700 }}>
-                📝 Generated Policy JSON
+                <EditIcon size={16} /> Generated Policy JSON
               </h4>
               <button className="btn btn-secondary btn-sm" onClick={copyToClipboard}>
-                {copied ? "✅ Copied!" : "📋 Copy"}
+                {copied ? <><CheckCircleIcon size={14} /> Copied!</> : <><CopyIcon size={14} /> Copy</>}
               </button>
             </div>
 

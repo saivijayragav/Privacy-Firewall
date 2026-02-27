@@ -7,34 +7,51 @@ import {
   processFile,
 } from "@/lib/api";
 import { useCallback, useRef, useState } from "react";
+import {
+  FolderIcon,
+  ImageIcon,
+  MusicIcon,
+  FileTextIcon,
+  SearchIcon,
+  FlagIcon,
+  BrainIcon,
+  ClipboardIcon,
+  CheckCircleIcon,
+  DownloadIcon,
+  AlertTriangleIcon,
+  FlagModeIcon,
+  WarnModeIcon,
+  RedactModeIcon,
+  PolicyModeIcon,
+} from "@/components/Icons";
 
 const MODES: {
   value: ProcessingMode;
-  icon: string;
+  icon: React.ReactNode;
   name: string;
   desc: string;
 }[] = [
   {
     value: "flag",
-    icon: "🟢",
+    icon: <FlagModeIcon size={20} />,
     name: "Flag Only",
     desc: "Detect & flag sensitive items without altering the file",
   },
   {
     value: "warn",
-    icon: "🟡",
+    icon: <WarnModeIcon size={20} />,
     name: "Warn & Recommend",
     desc: "Flag items and recommend redaction actions",
   },
   {
     value: "auto_redact",
-    icon: "🔴",
+    icon: <RedactModeIcon size={20} />,
     name: "Auto Redact",
     desc: "Automatically detect and redact sensitive content",
   },
   {
     value: "policy",
-    icon: "⚫",
+    icon: <PolicyModeIcon size={20} />,
     name: "Policy Enforced",
     desc: "Apply enterprise rules for selective redaction",
   },
@@ -52,10 +69,10 @@ function formatBytes(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
-function fileIcon(type: MediaType): string {
-  if (type === "image") return "🖼️";
-  if (type === "audio") return "🎵";
-  return "📄";
+function fileIcon(type: MediaType): React.ReactNode {
+  if (type === "image") return <ImageIcon size={28} color="var(--accent)" />;
+  if (type === "audio") return <MusicIcon size={28} color="var(--accent)" />;
+  return <FileTextIcon size={28} color="var(--accent)" />;
 }
 
 function severityColor(s: string): string {
@@ -154,7 +171,7 @@ export default function DashboardPage() {
         onDragLeave={() => setDragOver(false)}
         onDrop={handleDrop}
       >
-        <span className="upload-icon">📁</span>
+        <span className="upload-icon"><FolderIcon size={48} color="var(--accent)" /></span>
         <h3>Drop your file here, or click to browse</h3>
         <p>
           Supports images (JPG, PNG), documents (PDF, TXT), and audio (WAV, MP3)
@@ -295,7 +312,7 @@ export default function DashboardPage() {
               <span className="spinner" /> Scanning...
             </>
           ) : (
-            <>🔍 Scan File</>
+            <><SearchIcon size={18} /> Scan File</>
           )}
         </button>
       </div>
@@ -324,7 +341,7 @@ export default function DashboardPage() {
             <div
               className={`warning-banner ${riskPercent >= 70 ? "high" : "moderate"}`}
             >
-              ⚠️ {result.warning_message}
+              <AlertTriangleIcon size={16} /> {result.warning_message}
             </div>
           )}
 
@@ -395,7 +412,7 @@ export default function DashboardPage() {
                     target="_blank"
                     rel="noreferrer"
                   >
-                    📥 Download Redacted
+                    <DownloadIcon size={16} /> Download Redacted
                   </a>
                 </div>
               )}
@@ -413,7 +430,7 @@ export default function DashboardPage() {
                     }}
                   >
                     <h4 style={{ fontSize: 15, fontWeight: 700 }}>
-                      🚩 Flagged Entities
+                      <FlagIcon size={16} /> Flagged Entities
                     </h4>
                   </div>
                   <div style={{ overflowX: "auto" }}>
@@ -474,7 +491,7 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="glass-card empty-state">
-                  <div className="icon">✅</div>
+                  <div className="icon"><CheckCircleIcon size={48} color="var(--success)" /></div>
                   <h3>No Sensitive Entities Found</h3>
                   <p>This file appears to be safe</p>
                 </div>
@@ -487,7 +504,7 @@ export default function DashboardPage() {
                   style={{ marginTop: 20, padding: 24 }}
                 >
                   <h4 style={{ fontSize: 15, fontWeight: 700, marginBottom: 16 }}>
-                    🧠 AI Reasoning
+                    <BrainIcon size={16} /> AI Reasoning
                   </h4>
                   {result.reasoning_trace.map((trace, i) => (
                     <div
@@ -515,7 +532,7 @@ export default function DashboardPage() {
                   style={{ marginTop: 20, padding: 24 }}
                 >
                   <h4 style={{ fontSize: 15, fontWeight: 700, marginBottom: 20 }}>
-                    📋 Audit Log
+                    <ClipboardIcon size={16} /> Audit Log
                   </h4>
                   <div className="audit-timeline">
                     {result.audit_log.map((event, i) => (
