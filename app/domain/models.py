@@ -84,6 +84,8 @@ class ProcessingResponse(BaseModel):
     audit_log: list[AuditEvent]
     reasoning_trace: list[str]
     output_file_path: str | None = None
+    object_store_key: str | None = None
+    download_url: str | None = None
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -137,3 +139,13 @@ class RegionDetectResponse(BaseModel):
     """Entities found inside the user-drawn crop region."""
 
     entities: list[DetectedEntity]
+
+
+class RedactResponse(BaseModel):
+    """Returned by POST /redact after applying approved redactions."""
+
+    status: str
+    object_key: str | None = None
+    download_url: str | None = None
+    filename: str | None = None
+    local_path: str | None = None

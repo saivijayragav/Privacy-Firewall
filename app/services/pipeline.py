@@ -20,6 +20,7 @@ from app.services.contextual import ContextualIntelligenceService
 from app.services.decisioning import DecisionEngine, RiskScoringService
 from app.services.detectors import EntityDetector, _build_segment_offset_map, map_bbox_by_offset
 from app.services.extractors import ExtractionOutput, SignalExtractor
+from app.services.object_store import R2ObjectStore
 from app.services.redaction import RedactionService
 from app.services.scan_store import ScanResult, ScanStore
 
@@ -35,6 +36,7 @@ class PrivacyFirewallPipeline:
         redaction: RedactionService,
         output_dir: Path,
         scan_store: ScanStore | None = None,
+        object_store: R2ObjectStore | None = None,
     ) -> None:
         self.extractor = extractor
         self.detector = detector
@@ -45,6 +47,7 @@ class PrivacyFirewallPipeline:
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.scan_store = scan_store or ScanStore()
+        self.object_store = object_store or R2ObjectStore(None, None, None)
 
     async def process_document(self, file_path: Path, options: ProcessOptions) -> ProcessingResponse:
         extraction = self.extractor.extract_document(file_path)
@@ -116,8 +119,11 @@ class PrivacyFirewallPipeline:
         scan: ScanResult,
         approved_ids: list[str],
         manual_regions: list[ManualRegion] | None = None,
-    ) -> tuple[Path | None, dict]:
-        """Build a filtered redaction plan and execute it."""
+    ) -> tuple[Path | None, dict, str | None]:
+        """Build a filtered redaction plan and execute it.
+
+        Returns (output_path, report, r2_object_key).
+        """
         plan = scan.recommended_plan
         if plan is None:
             plan = RedactionPlan(
@@ -153,14 +159,23 @@ class PrivacyFirewallPipeline:
                 )
 
         if not plan.redaction_regions and not plan.audio_timestamps:
-            return None, {"status": "nothing_to_redact"}
+            return None, {"status": "nothing_to_redact"}, None
 
-        return self.redaction.execute(
+        output_path, report = self.redaction.execute(
             scan.media_type,
             scan.extraction.temp_file_path,
             self.output_dir,
             plan,
         )
+
+        # Upload to R2 if available
+        r2_key: str | None = None
+        if output_path and output_path.exists():
+            r2_key = self.object_store.upload(
+                output_path, scan_id=scan.scan_id,
+            )
+
+        return output_path, report, r2_key
 
     # ────────────────────────────────────────────────────────────────
     # Two-phase: Detect entities in a user-drawn crop region
@@ -230,12 +245,20 @@ class PrivacyFirewallPipeline:
         recommended_plan = self.redaction.plan(media_type, [item.detected for item in flagged]) if flagged else None
         output_file_path: str | None = None
         redaction_report: dict | None = None
+        r2_key: str | None = None
+        r2_url: str | None = None
 
         if should_redact and recommended_plan and (options.apply_redaction or options.mode.value in {"auto_redact", "policy"}):
             out, report = self.redaction.execute(media_type, extraction.temp_file_path, self.output_dir, recommended_plan)
             redaction_report = report
             output_file_path = str(out) if out else None
             audit_log.append(AuditEvent(stage="redaction_execution", details=report))
+
+            # Upload to R2 if available
+            if out and out.exists():
+                r2_key = self.object_store.upload(out)
+                if r2_key:
+                    r2_url = self.object_store.presigned_url(r2_key)
 
         return ProcessingResponse(
             mode_used=options.mode,
@@ -247,6 +270,8 @@ class PrivacyFirewallPipeline:
             audit_log=audit_log,
             reasoning_trace=reasoning_trace,
             output_file_path=output_file_path,
+            object_store_key=r2_key if r2_key else None,
+            download_url=r2_url if r2_url else None,
         )
 
     async def _detect_and_classify(

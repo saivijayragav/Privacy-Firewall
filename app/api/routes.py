@@ -12,6 +12,7 @@ from app.domain.models import (
     ProcessingMode,
     ProcessingResponse,
     RedactRequest,
+    RedactResponse,
     RegionDetectRequest,
     RegionDetectResponse,
     ScanResponse,
@@ -123,16 +124,16 @@ async def scan_audio(
 # ────────────────────────────────────────────────────────────────────
 
 
-@router.post("/redact")
+@router.post("/redact", response_model=RedactResponse)
 async def redact(
     body: RedactRequest,
     pipeline: PrivacyFirewallPipeline = Depends(get_pipeline),
-) -> FileResponse:
+) -> RedactResponse:
     scan = pipeline.scan_store.get(body.scan_id)
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan result not found or expired.")
 
-    output_path, report = pipeline.redact_from_scan(
+    output_path, report, r2_key = pipeline.redact_from_scan(
         scan,
         approved_ids=body.approved_region_ids,
         manual_regions=body.manual_regions,
@@ -141,23 +142,17 @@ async def redact(
     if output_path is None or not output_path.exists():
         raise HTTPException(status_code=422, detail=report.get("status", "redaction_failed"))
 
-    # Determine media type for Content-Type header
-    suffix = output_path.suffix.lower()
-    media_map = {
-        ".pdf": "application/pdf",
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".wav": "audio/wav",
-        ".mp3": "audio/mpeg",
-        ".flac": "audio/flac",
-    }
-    media_type = media_map.get(suffix, "application/octet-stream")
+    # Generate presigned download URL if R2 upload succeeded
+    download_url: str | None = None
+    if r2_key:
+        download_url = pipeline.object_store.presigned_url(r2_key, expires_in=3600)
 
-    return FileResponse(
-        path=str(output_path),
+    return RedactResponse(
+        status="success",
+        object_key=r2_key,
+        download_url=download_url,
         filename=output_path.name,
-        media_type=media_type,
+        local_path=str(output_path) if not r2_key else None,
     )
 
 
@@ -177,3 +172,54 @@ async def detect_region(
 
     entities = pipeline.detect_in_region(scan, bbox=body.bbox, page=body.page)
     return RegionDetectResponse(entities=entities)
+
+
+# ────────────────────────────────────────────────────────────────────
+# File retrieval / storage endpoints
+# ────────────────────────────────────────────────────────────────────
+
+
+@router.get("/files/{object_key:path}")
+async def get_file_url(
+    object_key: str,
+    pipeline: PrivacyFirewallPipeline = Depends(get_pipeline),
+):
+    """Generate a fresh presigned download URL for an R2 object."""
+    if not pipeline.object_store.enabled:
+        raise HTTPException(status_code=501, detail="Object storage is not configured.")
+
+    url = pipeline.object_store.presigned_url(object_key, expires_in=3600)
+    if url is None:
+        raise HTTPException(status_code=404, detail="Could not generate URL for the given key.")
+
+    return {"object_key": object_key, "download_url": url, "expires_in": 3600}
+
+
+@router.get("/files")
+async def list_files(
+    prefix: str = "redacted/",
+    max_keys: int = 100,
+    pipeline: PrivacyFirewallPipeline = Depends(get_pipeline),
+):
+    """List stored files in R2."""
+    if not pipeline.object_store.enabled:
+        raise HTTPException(status_code=501, detail="Object storage is not configured.")
+
+    objects = pipeline.object_store.list_objects(prefix=prefix, max_keys=max_keys)
+    return {"objects": objects, "count": len(objects)}
+
+
+@router.delete("/files/{object_key:path}")
+async def delete_file(
+    object_key: str,
+    pipeline: PrivacyFirewallPipeline = Depends(get_pipeline),
+):
+    """Delete a file from R2."""
+    if not pipeline.object_store.enabled:
+        raise HTTPException(status_code=501, detail="Object storage is not configured.")
+
+    success = pipeline.object_store.delete(object_key)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to delete object.")
+
+    return {"status": "deleted", "object_key": object_key}

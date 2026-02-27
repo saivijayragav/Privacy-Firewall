@@ -19,10 +19,16 @@ class AppSettings(BaseSettings):
     auto_redact_threshold: float = 0.65
 
     # Cloudflare R2 object storage (optional – omit to stay local-only)
-    r2_endpoint_url: str | None = Field(default=None, description="e.g. https://<account_id>.r2.cloudflarestorage.com")
-    r2_access_key_id: str | None = Field(default=None)
-    r2_secret_access_key: str | None = Field(default=None)
-    r2_bucket_name: str = "privacy-firewall"
+    cloudflare_account_id: str | None = Field(default=None)
+    cloudflare_access_id: str | None = Field(default=None)
+    cloudflare_secret_access_key: str | None = Field(default=None)
+    cloudflare_bucket: str = "privacy-firewall"
+
+    @property
+    def r2_endpoint_url(self) -> str | None:
+        if self.cloudflare_account_id:
+            return f"https://{self.cloudflare_account_id}.r2.cloudflarestorage.com"
+        return None
 
     # Local file cleanup
     local_file_max_age_hours: int = Field(default=1, description="Delete local uploads/outputs older than this")
