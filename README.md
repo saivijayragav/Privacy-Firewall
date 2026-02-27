@@ -412,7 +412,7 @@ If `AIPIPE_TOKEN` is missing, contextual classification falls back to heuristics
 ## 3) Run API server
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --host 0.0.0.0 --reload
 ```
 
 Health endpoint:

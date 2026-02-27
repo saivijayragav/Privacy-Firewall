@@ -11,47 +11,194 @@ from app.settings import AppSettings
 class ContextualIntelligenceService:
     def __init__(self, settings: AppSettings) -> None:
         self.settings = settings
+        self._client: httpx.AsyncClient | None = None
+        self._api_available: bool | None = None  # cached reachability
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=8.0)
+        return self._client
+
+    async def _is_api_reachable(self) -> bool:
+        """Quick check; cached after first call."""
+        if self._api_available is not None:
+            return self._api_available
+        if not self.settings.aipipe_token:
+            self._api_available = False
+            return False
+        try:
+            client = await self._get_client()
+            resp = await client.get(self.settings.aipipe_base_url, timeout=3.0)
+            self._api_available = resp.status_code < 500
+        except Exception:
+            self._api_available = False
+        return self._api_available
 
     async def classify(self, entities: list[DetectedEntity], full_text: str) -> list[ContextualEvaluation]:
-        results: list[ContextualEvaluation] = []
-        for entity in entities:
-            evaluation = await self._classify_entity(entity, full_text)
-            results.append(evaluation)
-        return results
+        if not entities:
+            return []
 
-    async def _classify_entity(self, entity: DetectedEntity, full_text: str) -> ContextualEvaluation:
-        if not self.settings.aipipe_token:
-            return self._heuristic_fallback(entity)
+        # Try batched LLM classification first
+        if await self._is_api_reachable():
+            result = await self._classify_batch(entities, full_text)
+            if result is not None:
+                return result
 
-        prompt = self._build_prompt(entity, full_text)
-        url = f"{self.settings.aipipe_base_url}/openai/v1/responses"
+        # Fallback: heuristic for all
+        return [self._heuristic_fallback(e) for e in entities]
+
+    async def _classify_batch(self, entities: list[DetectedEntity], full_text: str) -> list[ContextualEvaluation] | None:
+        """Classify all entities in a single LLM call."""
+        entity_list_str = "\n".join(
+            f"  {i+1}. id={e.entity_id} type={e.type} value={e.raw_value}"
+            for i, e in enumerate(entities[:50])  # cap at 50
+        )
+        prompt = (
+            "You are a privacy classifier. For EACH entity below, decide if it is truly sensitive PII.\n"
+            "Return strict JSON: a list of objects with keys: "
+            "entity_id (string), is_sensitive (boolean), severity_level (high|medium|low), "
+            "confidence_score (0..1), reasoning (string).\n"
+            "No markdown, no extra prose. Return one object per entity in the same order.\n\n"
+            f"Entities:\n{entity_list_str}\n\n"
+            f"Document context (first 6000 chars):\n{full_text[:6000]}"
+        )
+
+        url = f"{self.settings.aipipe_base_url}/openrouter/v1/responses"
         headers = {
             "Authorization": f"Bearer {self.settings.aipipe_token}",
             "Content-Type": "application/json",
         }
-        payload = {
-            "model": self.settings.aipipe_model,
-            "input": prompt,
-        }
+        payload = {"model": self.settings.aipipe_model, "input": prompt}
 
         try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
+            client = await self._get_client()
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            text_out = self._extract_output_text(data)
+            items = json.loads(text_out)
+            if not isinstance(items, list) or len(items) == 0:
+                return None
+
+            # Index by entity_id for lookup
+            llm_map: dict[str, dict] = {}
+            for item in items:
+                eid = item.get("entity_id", "")
+                if eid:
+                    llm_map[eid] = item
+
+            results: list[ContextualEvaluation] = []
+            for entity in entities:
+                if entity.entity_id in llm_map:
+                    parsed = llm_map[entity.entity_id]
+                    try:
+                        severity = SeverityLevel(parsed.get("severity_level", "low").lower())
+                        results.append(ContextualEvaluation(
+                            entity_id=entity.entity_id,
+                            is_sensitive=bool(parsed.get("is_sensitive", True)),
+                            severity_level=severity,
+                            confidence_score=float(parsed.get("confidence_score", entity.confidence_score)),
+                            reasoning=str(parsed.get("reasoning", "LLM batch decision.")),
+                        ))
+                        continue
+                    except Exception:
+                        pass
+                # Fallback for this entity
+                results.append(self._heuristic_fallback(entity))
+            return results
+        except Exception:
+            self._api_available = False  # mark as down, skip future calls
+            return None
+
+    async def discover_additional_pii(self, full_text: str, already_found: list[str]) -> list[DetectedEntity]:
+        """Use LLM as a catch-all to discover PII not found by regex/Presidio.
+
+        Splits the text into overlapping chunks so items near the end of long
+        documents (e.g. back side of an Aadhaar card) are not lost to truncation.
+        """
+        from uuid import uuid4
+        from app.domain.models import LocationReference
+
+        if not await self._is_api_reachable() or not full_text.strip():
+            return []
+
+        # --- chunk the text so nothing gets truncated ---
+        CHUNK_SIZE = 4000
+        OVERLAP = 400
+        chunks: list[tuple[int, str]] = []  # (offset, text)
+        start = 0
+        while start < len(full_text):
+            end = start + CHUNK_SIZE
+            chunks.append((start, full_text[start:end]))
+            start = end - OVERLAP
+            if start >= len(full_text):
+                break
+
+        all_additional: list[DetectedEntity] = []
+        seen_values: set[str] = set()
+
+        for chunk_offset, chunk_text in chunks:
+            already_str = ", ".join(already_found[:30]) if already_found else "none"
+            prompt = (
+                "You are a PII detector. Analyze the following text and find ALL personally identifiable information "
+                "that is NOT already in this list of already-detected values: [" + already_str + "].\n"
+                "Return strict JSON: a list of objects with keys: "
+                'type (string, e.g. "name", "address", "dob", "signature", "account_number", etc.), '
+                "value (the exact text found), "
+                "is_sensitive (boolean), "
+                'severity_level ("high"|"medium"|"low"), '
+                "confidence_score (0..1), "
+                "reasoning (string).\n"
+                "Return [] if nothing new found. No markdown, no extra prose.\n\n"
+                f"Text to analyze:\n{chunk_text}"
+            )
+
+            url = f"{self.settings.aipipe_base_url}/openrouter/v1/responses"
+            headers = {
+                "Authorization": f"Bearer {self.settings.aipipe_token}",
+                "Content-Type": "application/json",
+            }
+            payload = {"model": self.settings.aipipe_model, "input": prompt}
+
+            try:
+                client = await self._get_client()
                 response = await client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
                 data = response.json()
+                text_out = self._extract_output_text(data)
+                items = json.loads(text_out)
+                if not isinstance(items, list):
+                    continue
 
-            text_out = self._extract_output_text(data)
-            parsed = json.loads(text_out)
-            severity = SeverityLevel(parsed.get("severity_level", "low").lower())
-            return ContextualEvaluation(
-                entity_id=entity.entity_id,
-                is_sensitive=bool(parsed.get("is_sensitive", True)),
-                severity_level=severity,
-                confidence_score=float(parsed.get("confidence_score", entity.confidence_score)),
-                reasoning=str(parsed.get("reasoning", "LLM contextual decision.")),
-            )
-        except Exception:
-            return self._heuristic_fallback(entity)
+                for item in items:
+                    value = str(item.get("value", "")).strip()
+                    if not value or not item.get("is_sensitive", False):
+                        continue
+                    # Find ALL occurrences using re so we redact every instance
+                    import re
+                    for m in re.finditer(re.escape(value), full_text):
+                        occurrence_key = (value, m.start())
+                        if occurrence_key in seen_values:
+                            continue
+                        seen_values.add(occurrence_key)
+                        loc = LocationReference(
+                            page=1,
+                            start_char=m.start(),
+                            end_char=m.end(),
+                        )
+                        all_additional.append(
+                            DetectedEntity(
+                                entity_id=uuid4().hex,
+                                type=f"llm_{item.get('type', 'unknown')}".lower(),
+                                raw_value=value,
+                                location_reference=loc,
+                                confidence_score=min(float(item.get("confidence_score", 0.7)), 1.0),
+                            )
+                        )
+            except Exception:
+                continue
+
+        return all_additional
 
     def _extract_output_text(self, payload: dict) -> str:
         output = payload.get("output", [])
@@ -63,22 +210,39 @@ class ContextualIntelligenceService:
         text = content[0].get("text")
         return text if isinstance(text, str) else "{}"
 
-    def _build_prompt(self, entity: DetectedEntity, full_text: str) -> str:
-        context_window = full_text[:2500]
-        return (
-            "You are a privacy classifier. Return strict JSON with keys: "
-            "is_sensitive (boolean), severity_level (high|medium|low), confidence_score (0..1), reasoning (string). "
-            "No markdown, no extra prose.\n"
-            f"Entity type: {entity.type}\n"
-            f"Entity value: {entity.raw_value}\n"
-            f"Document context:\n{context_window}"
-        )
-
     def _heuristic_fallback(self, entity: DetectedEntity) -> ContextualEvaluation:
-        high_tokens = {"credit_card", "aadhaar", "ssn", "iban", "bank_account"}
-        medium_tokens = {"phone", "email", "address", "upi_id", "ifsc", "swift"}
+        high_tokens = {
+            "credit_card", "aadhaar", "aadhaar_vid", "aadhaar_enrolment",
+            "ssn", "iban", "bank_account", "pan", "passport",
+            "driving_license", "voter_id", "face", "qr_code",
+            "date_of_birth", "parent_name",
+        }
+        medium_tokens = {
+            "phone_number", "email_address", "email", "phone", "address",
+            "upi_id", "ifsc", "swift", "vehicle_reg", "pin_code", "gender",
+            "person",
+        }
+        low_not_sensitive = {"date_time", "nrp", "location", "url"}
 
         entity_type = entity.type.lower()
+
+        # LLM-discovered entities (prefixed with llm_) are sensitive by default
+        if entity_type.startswith("llm_"):
+            inner = entity_type.removeprefix("llm_")
+            if inner in high_tokens or inner in {"name", "dob", "account_number", "signature", "biometric"}:
+                severity = SeverityLevel.HIGH
+            elif inner in medium_tokens or inner in {"address", "phone", "email"}:
+                severity = SeverityLevel.MEDIUM
+            else:
+                severity = SeverityLevel.MEDIUM
+            return ContextualEvaluation(
+                entity_id=entity.entity_id,
+                is_sensitive=True,
+                severity_level=severity,
+                confidence_score=min(max(entity.confidence_score, 0.7), 1.0),
+                reasoning=f"LLM-discovered: {entity_type} classified as {severity.value}.",
+            )
+
         if entity_type in high_tokens:
             severity = SeverityLevel.HIGH
             sensitive = True
@@ -87,6 +251,10 @@ class ContextualIntelligenceService:
             severity = SeverityLevel.MEDIUM
             sensitive = True
             score = max(entity.confidence_score, 0.7)
+        elif entity_type in low_not_sensitive:
+            severity = SeverityLevel.LOW
+            sensitive = False
+            score = entity.confidence_score
         else:
             severity = SeverityLevel.LOW
             sensitive = True
@@ -97,5 +265,5 @@ class ContextualIntelligenceService:
             is_sensitive=sensitive,
             severity_level=severity,
             confidence_score=min(score, 1.0),
-            reasoning="Heuristic fallback classification.",
+            reasoning=f"Heuristic: {entity_type} classified as {severity.value}, sensitive={sensitive}.",
         )

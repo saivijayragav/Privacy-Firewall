@@ -9,6 +9,7 @@ from app.services.detectors import EntityDetector
 from app.services.extractors import SignalExtractor
 from app.services.pipeline import PrivacyFirewallPipeline
 from app.services.redaction import RedactionService
+from app.services.scan_store import ScanStore
 from app.settings import get_settings
 
 
@@ -25,6 +26,7 @@ def get_pipeline() -> PrivacyFirewallPipeline:
     scorer = RiskScoringService()
     decision = DecisionEngine(default_threshold=settings.auto_redact_threshold)
     redaction = RedactionService()
+    scan_store = ScanStore(ttl_seconds=1800)  # 30-minute TTL
 
     return PrivacyFirewallPipeline(
         extractor=extractor,
@@ -34,4 +36,5 @@ def get_pipeline() -> PrivacyFirewallPipeline:
         decision_engine=decision,
         redaction=redaction,
         output_dir=output_dir,
+        scan_store=scan_store,
     )

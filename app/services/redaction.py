@@ -62,16 +62,19 @@ class RedactionService:
             import fitz
 
             doc = fitz.open(source)
+            redacted = 0
             for item in plan.redaction_regions:
                 page_num = (item.location_reference.page or 1) - 1
                 bbox = item.location_reference.bbox
                 if bbox and 0 <= page_num < len(doc):
                     rect = fitz.Rect(*bbox)
                     doc[page_num].add_redact_annot(rect, fill=(0, 0, 0))
+                    redacted += 1
             for page in doc:
                 page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
             doc.save(output)
-            return {"status": "success", "regions_redacted": len(plan.redaction_regions)}
+            doc.close()
+            return {"status": "success", "regions_redacted": redacted}
         except Exception as exc:
             return {"status": "failed", "reason": str(exc)}
 
@@ -83,12 +86,18 @@ class RedactionService:
             if image is None:
                 return {"status": "failed", "reason": "unable to load image"}
 
+            # Deduplicate regions by bbox coordinates to avoid redundant draws
+            seen_bboxes: set[tuple[int, int, int, int]] = set()
             redacted = 0
             for item in plan.redaction_regions:
                 bbox = item.location_reference.bbox
                 if not bbox:
                     continue
                 x0, y0, x1, y1 = [int(v) for v in bbox]
+                bbox_key = (x0, y0, x1, y1)
+                if bbox_key in seen_bboxes:
+                    continue
+                seen_bboxes.add(bbox_key)
                 cv2.rectangle(image, (x0, y0), (x1, y1), (0, 0, 0), thickness=-1)
                 redacted += 1
             cv2.imwrite(str(output), image)
