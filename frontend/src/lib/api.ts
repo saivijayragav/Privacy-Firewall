@@ -34,7 +34,7 @@ export interface FlaggedEntity {
 
 export interface RedactionRegion {
   entity_id: string;
-  media_type: string;
+  media_type: MediaType;
   location_reference: LocationReference;
   strategy_type: string;
 }
@@ -61,6 +61,48 @@ export interface ProcessingResponse {
   audit_log: AuditEvent[];
   reasoning_trace: string[];
   output_file_path?: string;
+  object_store_key?: string;
+  download_url?: string;
+}
+
+export interface ScanResponse {
+  scan_id: string;
+  flagged_entities: FlaggedEntity[];
+  risk_score: number;
+  warning_message?: string;
+  recommended_redaction_plan?: RedactionPlan;
+  audit_log: AuditEvent[];
+  reasoning_trace: string[];
+}
+
+export interface ManualRegion {
+  bbox: number[];
+  page?: number;
+  label?: string;
+}
+
+export interface RedactRequest {
+  scan_id: string;
+  approved_region_ids: string[];
+  manual_regions?: ManualRegion[];
+}
+
+export interface RedactResponse {
+  status: string;
+  object_key?: string;
+  download_url?: string;
+  filename?: string;
+  local_path?: string;
+}
+
+export interface RegionDetectRequest {
+  scan_id: string;
+  bbox: number[];
+  page?: number;
+}
+
+export interface RegionDetectResponse {
+  entities: DetectedEntity[];
 }
 
 export interface ProcessOptions {
@@ -72,6 +114,7 @@ export interface ProcessOptions {
 
 export type MediaType = "document" | "image" | "audio";
 
+// Phase 1 / Single-pass API
 export async function processFile(
   file: File,
   mediaType: MediaType,
@@ -98,6 +141,62 @@ export async function processFile(
     throw new Error(`API error ${res.status}: ${text}`);
   }
 
+  return res.json();
+}
+
+// Phase 2 APIs: Scan (detect only)
+export async function scanFile(file: File, mediaType: MediaType): Promise<ScanResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_BASE}/api/v1/scan/${mediaType}`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+
+  return res.json();
+}
+
+// Phase 2 APIs: Redact (apply regions to a scanned file)
+export async function redactFile(req: RedactRequest): Promise<RedactResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/redact`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+
+  return res.json();
+}
+
+// Phase 2 APIs: Detect inside a manual region
+export async function detectRegion(req: RegionDetectRequest): Promise<RegionDetectResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/detect/region`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+
+  return res.json();
+}
+
+// File / Storage APIs
+export async function getFileUrl(objectKey: string): Promise<{ download_url: string; expires_in: number }> {
+  const res = await fetch(`${API_BASE}/api/v1/files/${encodeURIComponent(objectKey)}`);
+  if (!res.ok) throw new Error("Failed to get file URL");
   return res.json();
 }
 
@@ -137,6 +236,64 @@ export async function generateAutoPolicy(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(stats),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+
+  return res.json();
+}
+
+export interface ReportRequest {
+  filename: string;
+  media_type: string;
+  risk_score: number;
+  flagged_entities: Array<{
+    type: string;
+    raw_value: string;
+    severity: string;
+    reasoning: string;
+  }>;
+}
+
+export async function generateComplianceReport(
+  req: ReportRequest
+): Promise<{ report_markdown: string }> {
+  const res = await fetch(`${API_BASE}/api/v1/compliance-report`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+
+  return res.json();
+}
+
+export interface SuggestionRequest {
+  filename: string;
+  media_type: string;
+  risk_score: number;
+  flagged_entities: Array<{
+    type: string;
+    raw_value: string;
+    severity: string;
+    reasoning: string;
+  }>;
+}
+
+export async function getPrivacySuggestions(
+  req: SuggestionRequest
+): Promise<{ suggestions: string[] }> {
+  const res = await fetch(`${API_BASE}/api/v1/privacy-suggestions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
   });
 
   if (!res.ok) {

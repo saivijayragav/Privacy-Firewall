@@ -4,9 +4,18 @@ import {
   type MediaType,
   type ProcessingMode,
   type ProcessingResponse,
+  type ScanResponse,
+  type RedactResponse,
+  type ManualRegion,
   processFile,
+  scanFile,
+  redactFile,
+  generateComplianceReport,
+  getPrivacySuggestions,
 } from "@/lib/api";
 import { useCallback, useRef, useState } from "react";
+import { ImageRedactionEditor } from "@/components/ImageRedactionEditor";
+import { ListRedactionEditor } from "@/components/ListRedactionEditor";
 import {
   FolderIcon,
   ImageIcon,
@@ -16,6 +25,7 @@ import {
   FlagIcon,
   BrainIcon,
   ClipboardIcon,
+  SparklesIcon,
   CheckCircleIcon,
   DownloadIcon,
   AlertTriangleIcon,
@@ -89,16 +99,28 @@ export default function DashboardPage() {
   const [applyRedaction, setApplyRedaction] = useState(false);
   const [policyJson, setPolicyJson] = useState("");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<ProcessingResponse | null>(null);
+  const [scanResult, setScanResult] = useState<ScanResponse | ProcessingResponse | null>(null);
+  const [redactResult, setRedactResult] = useState<RedactResponse | null>(null);
+  const [isReviewing, setIsReviewing] = useState(false);
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportMarkdown, setReportMarkdown] = useState<string | null>(null);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback((f: File) => {
     setFile(f);
     setMediaType(detectMediaType(f));
-    setResult(null);
+    setScanResult(null);
+    setRedactResult(null);
+    setIsReviewing(false);
     setError("");
+    setSuggestions([]);
   }, []);
 
   const handleDrop = useCallback(
@@ -114,34 +136,61 @@ export default function DashboardPage() {
     if (!file) return;
     setLoading(true);
     setError("");
-    setResult(null);
+    setScanResult(null);
+    setRedactResult(null);
+    setIsReviewing(false);
+    setSuggestions([]);
 
     try {
-      const res = await processFile(file, mediaType, {
-        mode,
-        apply_redaction: applyRedaction,
-        score_threshold: threshold,
-        policy_json: mode === "policy" ? policyJson : undefined,
-      });
-      setResult(res);
+      if (applyRedaction) {
+        // Two-phase workflow for all media types
+        const res = await scanFile(file, mediaType);
+        setScanResult(res);
+        setIsReviewing(true);
+      } else {
+        // Original workflow 
+        const res = await processFile(file, mediaType, {
+          mode,
+          apply_redaction: applyRedaction,
+          score_threshold: threshold,
+          policy_json: mode === "policy" ? policyJson : undefined,
+        });
+        setScanResult(res);
 
-      // Save to history
-      const history = JSON.parse(localStorage.getItem("scan_history") || "[]");
-      history.unshift({
-        id: Date.now(),
-        fileName: file.name,
-        fileSize: file.size,
-        mediaType,
-        mode,
-        riskScore: res.risk_score,
-        entityCount: res.flagged_entities.length,
-        timestamp: new Date().toISOString(),
-        result: res,
-      });
-      localStorage.setItem(
-        "scan_history",
-        JSON.stringify(history.slice(0, 50))
-      );
+        // Save to history
+        const history = JSON.parse(localStorage.getItem("scan_history") || "[]");
+        history.unshift({
+          id: Date.now(),
+          fileName: file.name,
+          fileSize: file.size,
+          mediaType,
+          mode,
+          riskScore: res.risk_score,
+          entityCount: res.flagged_entities.length,
+          timestamp: new Date().toISOString(),
+          result: res,
+        });
+        localStorage.setItem("scan_history", JSON.stringify(history.slice(0, 50)));
+        
+        // Asynchronously fetch Proactive Advice
+        if (res.flagged_entities.length > 0) {
+          setLoadingSuggestions(true);
+          getPrivacySuggestions({
+            filename: file.name,
+            media_type: mediaType,
+            risk_score: res.risk_score,
+            flagged_entities: res.flagged_entities.map((f) => ({
+              type: f.detected.type,
+              raw_value: f.detected.raw_value,
+              severity: f.contextual.severity_level,
+              reasoning: f.contextual.reasoning,
+            })),
+          })
+            .then((sRes) => setSuggestions(sRes.suggestions))
+            .catch((e) => console.error("Suggestions failed:", e))
+            .finally(() => setLoadingSuggestions(false));
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Scan failed");
     } finally {
@@ -149,7 +198,87 @@ export default function DashboardPage() {
     }
   }
 
-  const riskPercent = result ? Math.round(result.risk_score * 100) : 0;
+  async function handleRedactConfirm(approvedIds: string[], manualRegions: ManualRegion[]) {
+    if (!scanResult || !("scan_id" in scanResult)) return;
+    setLoading(true);
+    setError("");
+    
+    try {
+      const res = await redactFile({
+        scan_id: scanResult.scan_id,
+        approved_region_ids: approvedIds,
+        manual_regions: manualRegions
+      });
+      setRedactResult(res);
+      setIsReviewing(false);
+
+      // Save to history here
+      const history = JSON.parse(localStorage.getItem("scan_history") || "[]");
+      history.unshift({
+        id: Date.now(),
+        fileName: file!.name,
+        fileSize: file!.size,
+        mediaType,
+        mode,
+        riskScore: scanResult.risk_score,
+        entityCount: scanResult.flagged_entities.length,
+        timestamp: new Date().toISOString(),
+        result: { 
+          ...scanResult, 
+          object_store_key: res.object_key, 
+          download_url: res.download_url 
+        },
+      });
+      localStorage.setItem("scan_history", JSON.stringify(history.slice(0, 50)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Redaction failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleGenerateReport() {
+    if (!scanResult || !file) return;
+    setReportLoading(true);
+    setError("");
+    setReportMarkdown(null);
+    setReportModalOpen(true);
+
+    try {
+      const res = await generateComplianceReport({
+        filename: file.name,
+        media_type: mediaType,
+        risk_score: scanResult.risk_score,
+        flagged_entities: scanResult.flagged_entities.map((f) => ({
+          type: f.detected.type,
+          raw_value: f.detected.raw_value,
+          severity: f.contextual.severity_level,
+          reasoning: f.contextual.reasoning,
+        })),
+      });
+      setReportMarkdown(res.report_markdown);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Report generation failed");
+      setReportModalOpen(false);
+    } finally {
+      setReportLoading(false);
+    }
+  }
+
+  function downloadReport() {
+    if (!reportMarkdown || !file) return;
+    const blob = new Blob([reportMarkdown], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Privacy_Report_${file.name}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  const riskPercent = scanResult ? Math.round(scanResult.risk_score * 100) : 0;
   const circumference = 2 * Math.PI * 72;
   const dashOffset = circumference - (circumference * riskPercent) / 100;
 
@@ -200,7 +329,9 @@ export default function DashboardPage() {
             className="remove-btn"
             onClick={() => {
               setFile(null);
-              setResult(null);
+              setScanResult(null);
+              setRedactResult(null);
+              setIsReviewing(false);
             }}
           >
             ✕
@@ -323,8 +454,51 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Results */}
-      {result && (
+      {/* Interactive Review UI */}
+      {isReviewing && scanResult && file && mediaType === "image" && (
+        <ImageRedactionEditor 
+          file={file} 
+          scanResult={scanResult as ScanResponse} 
+          onRedact={handleRedactConfirm} 
+          onCancel={() => setIsReviewing(false)} 
+        />
+      )}
+      
+      {isReviewing && scanResult && file && mediaType !== "image" && (
+        <ListRedactionEditor 
+          file={file} 
+          scanResult={scanResult as ScanResponse} 
+          onRedact={handleRedactConfirm} 
+          onCancel={() => setIsReviewing(false)} 
+        />
+      )}
+
+      {/* Before / After Preview (when Redaction is complete) */}
+      {!isReviewing && scanResult && (redactResult?.download_url || redactResult?.local_path) && (
+        <div style={{ marginTop: 40 }} className="fade-in">
+          <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>Redaction Complete</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+            {/* Original */}
+            <div className="glass-card" style={{ padding: 16 }}>
+              <div style={{ marginBottom: 12, fontWeight: 600, fontSize: 14, color: "var(--text-secondary)" }}>Original (Before)</div>
+              {mediaType === "image" && file && <img src={URL.createObjectURL(file)} alt="Original" style={{ width: "100%", borderRadius: 8 }} />}
+              {mediaType === "audio" && file && <audio controls src={URL.createObjectURL(file)} style={{ width: "100%" }} />}
+              {mediaType === "document" && file && <iframe src={URL.createObjectURL(file)} style={{ width: "100%", height: 400, border: "none", borderRadius: 8, background: "#fff" }} />}
+            </div>
+
+            {/* Redacted */}
+            <div className="glass-card" style={{ padding: 16, border: "1px solid var(--accent)" }}>
+              <div style={{ marginBottom: 12, fontWeight: 600, fontSize: 14, color: "var(--accent)" }}>Redacted (After)</div>
+              {mediaType === "image" && <img src={redactResult.download_url || `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent(redactResult.local_path || "")}`} alt="Redacted" style={{ width: "100%", borderRadius: 8 }} />}
+              {mediaType === "audio" && <audio controls src={redactResult.download_url || `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent(redactResult.local_path || "")}`} style={{ width: "100%" }} />}
+              {mediaType === "document" && <iframe src={redactResult.download_url || `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent(redactResult.local_path || "")}`} style={{ width: "100%", height: 400, border: "none", borderRadius: 8, background: "#fff" }} />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Results details */}
+      {scanResult && !isReviewing && (
         <div style={{ marginTop: 40 }} className="fade-in">
           <h3
             style={{
@@ -337,11 +511,11 @@ export default function DashboardPage() {
           </h3>
 
           {/* Warning banner */}
-          {result.warning_message && (
+          {scanResult.warning_message && (
             <div
               className={`warning-banner ${riskPercent >= 70 ? "high" : "moderate"}`}
             >
-              <AlertTriangleIcon size={16} /> {result.warning_message}
+              <AlertTriangleIcon size={16} /> {scanResult.warning_message}
             </div>
           )}
 
@@ -391,7 +565,7 @@ export default function DashboardPage() {
               </div>
 
               <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
-                Mode: <strong>{result.mode_used}</strong>
+                Mode: <strong>{("mode_used" in scanResult) ? scanResult.mode_used : mode}</strong>
               </div>
               <div
                 style={{
@@ -401,27 +575,60 @@ export default function DashboardPage() {
                 }}
               >
                 Entities flagged:{" "}
-                <strong>{result.flagged_entities.length}</strong>
+                <strong>{scanResult.flagged_entities.length}</strong>
               </div>
 
-              {result.output_file_path && (
-                <div style={{ marginTop: 16 }}>
+              <div style={{ marginTop: 16, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                {(redactResult?.download_url || redactResult?.local_path || ("output_file_path" in scanResult && scanResult.output_file_path)) && (
                   <a
-                    href={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent(result.output_file_path)}`}
+                    href={redactResult?.download_url || (redactResult?.local_path ? `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent(redactResult.local_path)}` : `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent((scanResult as ProcessingResponse).output_file_path || "")}`)}
                     className="btn btn-secondary btn-sm"
                     target="_blank"
                     rel="noreferrer"
                   >
                     <DownloadIcon size={16} /> Download Redacted
                   </a>
-                </div>
-              )}
+                )}
+                <button
+                  onClick={handleGenerateReport}
+                  className="btn btn-primary btn-sm"
+                  disabled={reportLoading}
+                  style={{ display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  {reportLoading ? "Generating..." : <><ClipboardIcon size={14} /> Generate Privacy Report</>}
+                </button>
+              </div>
             </div>
 
             {/* Details */}
-            <div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              
+              {/* Proactive AI Advice */}
+              {(suggestions.length > 0 || loadingSuggestions) && (
+                <div className="glass-card" style={{ padding: 20, border: "1px solid var(--accent)", background: "rgba(14, 165, 233, 0.03)" }}>
+                  <h4 style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, display: "flex", alignItems: "center", gap: 8, color: "var(--accent)" }}>
+                    <SparklesIcon size={18} /> Proactive Advice
+                  </h4>
+                  {loadingSuggestions ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      <div className="skeleton" style={{ height: 16, width: "100%", borderRadius: 4 }}></div>
+                      <div className="skeleton" style={{ height: 16, width: "85%", borderRadius: 4 }}></div>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      {suggestions.map((advice, i) => (
+                        <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                          <span style={{ color: "var(--accent)", marginTop: 2 }}>✦</span>
+                          <span style={{ fontSize: 14, color: "var(--text)", lineHeight: 1.5 }}>{advice}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Flagged entities */}
-              {result.flagged_entities.length > 0 ? (
+              {scanResult.flagged_entities.length > 0 ? (
                 <div className="glass-card" style={{ padding: 0, overflow: "hidden" }}>
                   <div
                     style={{
@@ -445,7 +652,7 @@ export default function DashboardPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {result.flagged_entities.map((fe, i) => (
+                        {scanResult.flagged_entities.map((fe, i) => (
                           <tr key={i}>
                             <td style={{ fontWeight: 600, textTransform: "capitalize" }}>
                               {fe.detected.type.replace(/_/g, " ")}
@@ -498,7 +705,7 @@ export default function DashboardPage() {
               )}
 
               {/* Reasoning trace */}
-              {result.reasoning_trace.length > 0 && (
+              {scanResult.reasoning_trace.length > 0 && (
                 <div
                   className="glass-card"
                   style={{ marginTop: 20, padding: 24 }}
@@ -506,7 +713,7 @@ export default function DashboardPage() {
                   <h4 style={{ fontSize: 15, fontWeight: 700, marginBottom: 16 }}>
                     <BrainIcon size={16} /> AI Reasoning
                   </h4>
-                  {result.reasoning_trace.map((trace, i) => (
+                  {scanResult.reasoning_trace.map((trace, i) => (
                     <div
                       key={i}
                       style={{
@@ -514,7 +721,7 @@ export default function DashboardPage() {
                         fontSize: 13,
                         color: "var(--text-secondary)",
                         borderBottom:
-                          i < result.reasoning_trace.length - 1
+                          i < scanResult.reasoning_trace.length - 1
                             ? "1px solid var(--border)"
                             : "none",
                       }}
@@ -526,7 +733,7 @@ export default function DashboardPage() {
               )}
 
               {/* Audit log */}
-              {result.audit_log.length > 0 && (
+              {scanResult.audit_log.length > 0 && (
                 <div
                   className="glass-card"
                   style={{ marginTop: 20, padding: 24 }}
@@ -535,7 +742,7 @@ export default function DashboardPage() {
                     <ClipboardIcon size={16} /> Audit Log
                   </h4>
                   <div className="audit-timeline">
-                    {result.audit_log.map((event, i) => (
+                    {scanResult.audit_log.map((event, i) => (
                       <div className="timeline-item" key={i}>
                         <div className="stage">
                           {event.stage.replace(/_/g, " ")}
@@ -552,6 +759,71 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* Render the Report Modal */}
+      {reportModalOpen && (
+        <div style={{
+          position: "fixed",
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: "rgba(0,0,0,0.5)",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 9999,
+          padding: 20
+        }}>
+          <div className="glass-card fade-in" style={{
+            width: "100%", maxWidth: 800, maxHeight: "90vh",
+            display: "flex", flexDirection: "column",
+            overflow: "hidden", padding: 0
+          }}>
+            <div style={{ padding: 20, borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+                <ClipboardIcon size={20} color="var(--accent)" /> Smart Privacy Report
+              </h3>
+              <button 
+                onClick={() => setReportModalOpen(false)}
+                style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 24, padding: "0 8px" }}
+              >
+                &times;
+              </button>
+            </div>
+            
+            <div style={{ padding: 24, overflowY: "auto", flex: 1, backgroundColor: "var(--bg-secondary)" }}>
+              {reportLoading ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, color: "var(--text-muted)" }}>
+                  <div className="spinner" style={{ marginBottom: 16, border: "3px solid rgba(255,255,255,0.1)", borderTopColor: "var(--accent)", borderRadius: "50%", width: 24, height: 24, animation: "spin 1s linear infinite" }}></div>
+                  <p>Analyzing compliance risks and generating report...</p>
+                </div>
+              ) : reportMarkdown ? (
+                <pre style={{ 
+                  fontSize: 14, 
+                  lineHeight: 1.6, 
+                  color: "var(--text)", 
+                  whiteSpace: "pre-wrap", 
+                  fontFamily: "inherit", 
+                  margin: 0 
+                }}>
+                  {reportMarkdown}
+                </pre>
+              ) : (
+                <p style={{ color: "var(--danger)" }}>Failed to load report.</p>
+              )}
+            </div>
+
+            <div style={{ padding: 20, borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end" }}>
+              <button
+                className="btn btn-primary"
+                onClick={downloadReport}
+                disabled={reportLoading || !reportMarkdown}
+              >
+                <DownloadIcon size={16} /> Download Report (.md)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

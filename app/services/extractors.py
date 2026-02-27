@@ -48,8 +48,12 @@ class SignalExtractor:
     def extract_document(self, file_path: Path) -> ExtractionOutput:
         text_segments: list[dict] = []
         bounding_boxes: list[dict] = []
+        faces: list[dict] = []
+        objects: list[dict] = []
+        
         try:
             import fitz
+            import tempfile
 
             doc = fitz.open(file_path)
             for page_idx, page in enumerate(doc):
@@ -69,6 +73,40 @@ class SignalExtractor:
                             "text": cleaned,
                         }
                     )
+                
+                # Render the page as an image to catch faces, QR codes, and run OCR on images
+                try:
+                    pix = page.get_pixmap(dpi=150)
+                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                        tmp.write(pix.tobytes("png"))
+                        tmp_path = Path(tmp.name)
+                        
+                    img_ext = self.extract_image(tmp_path)
+                    scale = 72.0 / 150.0  # Images are 150 DPI, PDF coordinate space is 72 DPI
+                    
+                    for f in img_ext.faces:
+                        b = f["bbox"]
+                        faces.append({"page": page_idx + 1, "bbox": [b[0]*scale, b[1]*scale, b[2]*scale, b[3]*scale]})
+                        
+                    for o in img_ext.objects:
+                        b = o["bbox"]
+                        objects.append({"type": o["type"], "page": page_idx + 1, "bbox": [b[0]*scale, b[1]*scale, b[2]*scale, b[3]*scale]})
+                        
+                    for b in img_ext.bounding_boxes:
+                        box = b["bbox"]
+                        bounding_boxes.append({
+                            "page": page_idx + 1,
+                            "bbox": [box[0]*scale, box[1]*scale, box[2]*scale, box[3]*scale],
+                            "text": b["text"]
+                        })
+                        
+                    for t in img_ext.text_segments:
+                        text_segments.append({"page": page_idx + 1, "text": t["text"], "source": t.get("source", "ocr")})
+                        
+                    tmp_path.unlink(missing_ok=True)
+                except Exception as e:
+                    print(f"Failed to process image features for PDF page {page_idx + 1}: {e}")
+                    
             doc.close()
         except Exception:
             # Only attempt text fallback for non-PDF files (plain text, etc.)
@@ -82,8 +120,8 @@ class SignalExtractor:
             request_id=uuid4().hex,
             text_segments=text_segments,
             bounding_boxes=bounding_boxes,
-            faces=[],
-            objects=[],
+            faces=faces,
+            objects=objects,
             timestamps=[],
             temp_file_path=file_path,
             media_type="document",
