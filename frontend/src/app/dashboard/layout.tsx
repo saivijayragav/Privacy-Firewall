@@ -12,12 +12,14 @@ import {
   LogOutIcon,
   MenuIcon,
   XIcon,
+  TrendingUpIcon,
 } from "@/components/Icons";
 
 const NAV_ITEMS = [
   { href: "/dashboard", icon: <UploadIcon size={18} />, label: "Upload & Scan" },
   { href: "/dashboard/history", icon: <ClipboardIcon size={18} />, label: "Scan History" },
   { href: "/dashboard/policy", icon: <SettingsIcon size={18} />, label: "Policy Builder" },
+  { href: "/dashboard/trends", icon: <TrendingUpIcon size={18} />, label: "Trends" },
 ];
 
 export default function DashboardLayout({
@@ -99,13 +101,6 @@ export default function DashboardLayout({
             <p>{session.user.name}</p>
             <span>{session.user.email}</span>
           </div>
-          <button
-            className="logout-btn"
-            title="Sign out"
-            onClick={handleSignOut}
-          >
-            <LogOutIcon size={16} />
-          </button>
         </div>
       </aside>
 

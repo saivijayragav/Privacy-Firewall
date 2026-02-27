@@ -109,3 +109,40 @@ export async function healthCheck(): Promise<boolean> {
     return false;
   }
 }
+
+export interface ScanStats {
+  entity_counts: Record<string, number>;
+  total_scans: number;
+  avg_risk_score: number;
+  high_risk_scans: number;
+}
+
+export interface PolicyRecommendation {
+  entity_type: string;
+  action: "redact" | "ignore" | "review";
+  reason: string;
+}
+
+export interface AutoPolicyResponse {
+  always_redact: string[];
+  ignore: string[];
+  recommendations: PolicyRecommendation[];
+  reasoning: string;
+}
+
+export async function generateAutoPolicy(
+  stats: ScanStats
+): Promise<AutoPolicyResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/auto-policy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(stats),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+
+  return res.json();
+}
