@@ -192,12 +192,62 @@ export default function TrendsPage() {
 
   return (
     <div>
-      <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <h2>Privacy Score Trends</h2>
-          <p>Track your privacy behavior and risk patterns over time</p>
+      {/* Hero Header with Grid Background */}
+      <div style={{
+        position: "relative",
+        padding: "32px 0 40px",
+        marginBottom: "32px",
+        borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+        display: "flex", 
+        justifyContent: "space-between", 
+        alignItems: "flex-start", 
+        flexWrap: "wrap", 
+        gap: "16px"
+      }}>
+        {/* Faint Grid lines spanning the container */}
+        <div style={{
+          position: "absolute",
+          top: 0, left: "-32px", right: "-32px", bottom: 0,
+          backgroundImage: "linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px)",
+          backgroundSize: "32px 32px",
+          pointerEvents: "none",
+          zIndex: 0
+        }} />
+        
+        <div style={{ position: "relative", zIndex: 1, flex: 1, minWidth: "300px" }}>
+          <div style={{ 
+            color: "var(--accent-secondary)", 
+            fontSize: "12px", 
+            fontWeight: 700, 
+            letterSpacing: "0.15em", 
+            textTransform: "uppercase",
+            marginBottom: "8px",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px"
+          }}>
+            <span>//</span> METRICS & INSIGHTS
+          </div>
+          <h2 style={{ 
+            fontSize: "42px", 
+            fontWeight: 800, 
+            letterSpacing: "-0.02em", 
+            fontFamily: "var(--font-space-mono)",
+            textTransform: "capitalize",
+            marginBottom: "16px"
+          }}>
+            <span style={{ transform: "scaleX(1.1)", display: "inline-block", transformOrigin: "left" }}>Privacy Score Trends</span>
+          </h2>
+          <p style={{ 
+            color: "var(--text-secondary)", 
+            fontSize: "15px", 
+            lineHeight: "1.6" 
+          }}>
+            Track your privacy behavior and risk classification patterns across your entire organizational footprint over time.
+          </p>
         </div>
-        <div className="trends-range-toggle">
+
+        <div className="trends-range-toggle" style={{ position: "relative", zIndex: 1, marginTop: "16px" }}>
           {(["7d", "30d", "all"] as TimeRange[]).map((r) => (
             <button
               key={r}

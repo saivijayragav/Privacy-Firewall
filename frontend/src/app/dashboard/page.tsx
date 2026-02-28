@@ -34,6 +34,7 @@ import {
   WarnModeIcon,
   RedactModeIcon,
   PolicyModeIcon,
+  ArrowUpIcon
 } from "@/components/Icons";
 
 const MODES: {
@@ -291,12 +292,65 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <div className="page-header">
-        <h2>Upload & Scan</h2>
-        <p>Upload a file to scan for sensitive information</p>
+      {/* Hero Header with Grid Background */}
+      <div style={{
+        position: "relative",
+        padding: "32px 0 20px", // Reduced from 40px
+        marginBottom: "16px", // Reduced from 32px
+        borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+        display: "flex", 
+        justifyContent: "space-between", 
+        alignItems: "flex-start",
+        flexWrap: "wrap",
+        gap: "16px"
+      }}>
+        {/* Faint Grid lines spanning the container */}
+        <div style={{
+          position: "absolute",
+          top: 0, left: "-32px", right: "-32px", bottom: 0,
+          backgroundImage: "linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px)",
+          backgroundSize: "32px 32px",
+          pointerEvents: "none",
+          zIndex: 0
+        }} />
+        
+        <div style={{ position: "relative", zIndex: 1 }}>
+          <div style={{ 
+            color: "var(--accent-secondary)", 
+            fontSize: "12px", 
+            fontWeight: 700, 
+            letterSpacing: "0.15em", 
+            textTransform: "uppercase",
+            marginBottom: "8px",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px"
+          }}>
+            <span>//</span> PII DETECTION ENGINE
+          </div>
+          <h2 style={{ 
+            fontSize: "42px", 
+            fontWeight: 800, 
+            letterSpacing: "-0.02em", 
+            fontFamily: "var(--font-space-mono)",
+            textTransform: "capitalize", // Allows mixed case scaling while retaining modern width
+            marginBottom: "16px"
+          }}>
+            <span style={{ transform: "scaleX(1.1)", display: "inline-block", transformOrigin: "left" }}>Upload & Scan</span>
+          </h2>
+          <p style={{ 
+            color: "var(--text-muted)", // slightly softer color if desired
+            fontSize: "14px", 
+            lineHeight: "1.6",
+            fontFamily: "var(--font-space-mono)",
+            margin: 0 // Removes any default block margin
+          }}>
+            Detect, classify, and redact personally identifiable information from documents, images, and audio files using multi-layer analysis.
+          </p>
+        </div>
       </div>
 
-      {/* Upload zone */}
+      {/* Upload zone redesign */}
       <div
         className={`upload-zone ${dragOver ? "drag-over" : ""}`}
         onClick={() => fileRef.current?.click()}
@@ -306,16 +360,62 @@ export default function DashboardPage() {
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={handleDrop}
+        style={{
+          border: "1px dashed rgba(255, 255, 255, 0.1)",
+          borderRadius: "16px",
+          padding: "32px 24px", // Reduced from 48px to tighten vertical height
+          marginBottom: "32px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "var(--bg-secondary)",
+          cursor: "pointer",
+          transition: "all 0.2s"
+        }}
       >
-        <span className="upload-icon"><FolderIcon size={48} color="var(--accent)" /></span>
-        <h3>Drop your file here, or click to browse</h3>
-        <p>
-          Supports images (JPG, PNG), documents (PDF, TXT), and audio (WAV, MP3)
+        <div style={{
+          width: "56px",
+          height: "56px",
+          borderRadius: "14px",
+          backgroundColor: "rgba(255, 255, 255, 0.03)",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          marginBottom: "20px"
+        }}>
+          <ArrowUpIcon size={24} color="var(--accent)" />
+        </div>
+        
+        <h3 style={{ fontSize: "18px", fontWeight: 600, color: "var(--text-primary)", marginBottom: "12px" }}>
+          Drop your file here, or click to browse
+        </h3>
+        
+        <p style={{ fontSize: "13px", color: "var(--text-muted)", marginBottom: "4px", fontFamily: "var(--font-space-mono)" }}>
+          Max file size: 50MB per file
         </p>
+        
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "center" }}>
+          {["JPG", "PNG", "WEBP", "PDF", "TXT", "WAV", "MP3"].map(ext => (
+            <span key={ext} style={{ 
+              fontSize: "10px", 
+              fontWeight: 600, 
+              padding: "4px 8px", 
+              borderRadius: "6px", 
+              border: "1px solid rgba(255,255,255,0.08)",
+              color: ext === "PDF" || ext === "TXT" ? "var(--warning)" : ext === "WAV" || ext === "MP3" ? "#a855f7" : "var(--accent)"
+            }}>
+              {ext}
+            </span>
+          ))}
+        </div>
+
         <input
           ref={fileRef}
           type="file"
           accept="image/*,audio/*,.pdf,.txt,.doc,.docx"
+          style={{ display: "none" }}
           onChange={(e) => {
             if (e.target.files?.[0]) handleFile(e.target.files[0]);
           }}
@@ -376,20 +476,6 @@ export default function DashboardPage() {
 
       {/* Options */}
       <div className="options-panel">
-        <div className="option-group">
-          <label>Risk Threshold</label>
-          <input
-            type="range"
-            className="threshold-slider"
-            min="0"
-            max="1"
-            step="0.05"
-            value={threshold}
-            onChange={(e) => setThreshold(parseFloat(e.target.value))}
-          />
-          <div className="threshold-value">{threshold.toFixed(2)}</div>
-        </div>
-
         <div className="option-group">
           <label style={{ marginBottom: 12 }}>Options</label>
           <label

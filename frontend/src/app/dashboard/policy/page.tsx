@@ -171,13 +171,63 @@ export default function PolicyPage() {
 
   return (
     <div>
-      <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <h2>Policy Builder</h2>
-          <p>Configure privacy policies manually or let AI generate them from your scan patterns</p>
+      {/* Hero Header with Grid Background */}
+      <div style={{
+        position: "relative",
+        padding: "32px 0 40px",
+        marginBottom: "32px",
+        borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+        display: "flex", 
+        justifyContent: "space-between", 
+        alignItems: "flex-start", 
+        flexWrap: "wrap", 
+        gap: "16px"
+      }}>
+        {/* Faint Grid lines spanning the container */}
+        <div style={{
+          position: "absolute",
+          top: 0, left: "-32px", right: "-32px", bottom: 0,
+          backgroundImage: "linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px)",
+          backgroundSize: "32px 32px",
+          pointerEvents: "none",
+          zIndex: 0
+        }} />
+        
+        <div style={{ position: "relative", zIndex: 1, flex: 1, minWidth: "300px" }}>
+          <div style={{ 
+            color: "var(--accent-secondary)", 
+            fontSize: "12px", 
+            fontWeight: 700, 
+            letterSpacing: "0.15em", 
+            textTransform: "uppercase",
+            marginBottom: "8px",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px"
+          }}>
+            <span>//</span> COMPLIANCE ENGINE
+          </div>
+          <h2 style={{ 
+            fontSize: "42px", 
+            fontWeight: 800, 
+            letterSpacing: "-0.02em", 
+            fontFamily: "var(--font-space-mono)",
+            textTransform: "capitalize",
+            marginBottom: "16px"
+          }}>
+            <span style={{ transform: "scaleX(1.1)", display: "inline-block", transformOrigin: "left" }}>Policy Builder</span>
+          </h2>
+          <p style={{ 
+            color: "var(--text-secondary)", 
+            fontSize: "15px", 
+            lineHeight: "1.6" 
+          }}>
+            Configure privacy policies manually or let AI generate them from your scan patterns to automate enterprise redaction.
+          </p>
         </div>
+
         {/* Tab toggle */}
-        <div className="trends-range-toggle">
+        <div className="trends-range-toggle" style={{ position: "relative", zIndex: 1, marginTop: "16px" }}>
           <button className={`range-btn ${tab === "manual" ? "active" : ""}`} onClick={() => setTab("manual")}>
             <EditIcon size={14} /> Manual
           </button>

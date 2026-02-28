@@ -83,7 +83,7 @@ export interface ManualRegion {
 
 export interface RedactRequest {
   scan_id: string;
-  approved_region_ids: string[];
+  approved_region_ids?: string[];
   manual_regions?: ManualRegion[];
 }
 
