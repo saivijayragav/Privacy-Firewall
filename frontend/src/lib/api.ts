@@ -110,6 +110,7 @@ export interface ProcessOptions {
   apply_redaction?: boolean;
   score_threshold?: number;
   policy_json?: string;
+  use_llm?: boolean;
 }
 
 export type MediaType = "document" | "image" | "audio";
@@ -130,6 +131,7 @@ export async function processFile(
   if (options.policy_json) {
     formData.append("policy_json", options.policy_json);
   }
+  formData.append("use_llm", String(options.use_llm ?? true));
 
   const res = await fetch(`${API_BASE}/api/v1/process/${mediaType}`, {
     method: "POST",
@@ -145,9 +147,10 @@ export async function processFile(
 }
 
 // Phase 2 APIs: Scan (detect only)
-export async function scanFile(file: File, mediaType: MediaType): Promise<ScanResponse> {
+export async function scanFile(file: File, mediaType: MediaType, useLlm: boolean = true): Promise<ScanResponse> {
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("use_llm", String(useLlm));
   const res = await fetch(`${API_BASE}/api/v1/scan/${mediaType}`, {
     method: "POST",
     body: formData,

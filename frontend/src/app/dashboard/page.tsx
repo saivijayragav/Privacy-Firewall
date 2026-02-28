@@ -41,31 +41,31 @@ const MODES: {
   name: string;
   desc: string;
 }[] = [
-  {
-    value: "flag",
-    icon: <FlagModeIcon size={20} />,
-    name: "Flag Only",
-    desc: "Detect & flag sensitive items without altering the file",
-  },
-  {
-    value: "warn",
-    icon: <WarnModeIcon size={20} />,
-    name: "Warn & Recommend",
-    desc: "Flag items and recommend redaction actions",
-  },
-  {
-    value: "auto_redact",
-    icon: <RedactModeIcon size={20} />,
-    name: "Auto Redact",
-    desc: "Automatically detect and redact sensitive content",
-  },
-  {
-    value: "policy",
-    icon: <PolicyModeIcon size={20} />,
-    name: "Policy Enforced",
-    desc: "Apply enterprise rules for selective redaction",
-  },
-];
+    {
+      value: "flag",
+      icon: <FlagModeIcon size={20} />,
+      name: "Flag Only",
+      desc: "Detect & flag sensitive items without altering the file",
+    },
+    {
+      value: "warn",
+      icon: <WarnModeIcon size={20} />,
+      name: "Warn & Recommend",
+      desc: "Flag items and recommend redaction actions",
+    },
+    {
+      value: "auto_redact",
+      icon: <RedactModeIcon size={20} />,
+      name: "Auto Redact",
+      desc: "Automatically detect and redact sensitive content",
+    },
+    {
+      value: "policy",
+      icon: <PolicyModeIcon size={20} />,
+      name: "Policy Enforced",
+      desc: "Apply enterprise rules for selective redaction",
+    },
+  ];
 
 function detectMediaType(file: File): MediaType {
   if (file.type.startsWith("image/")) return "image";
@@ -97,6 +97,7 @@ export default function DashboardPage() {
   const [mode, setMode] = useState<ProcessingMode>("warn");
   const [threshold, setThreshold] = useState(0.65);
   const [applyRedaction, setApplyRedaction] = useState(false);
+  const [useLlm, setUseLlm] = useState(true);
   const [policyJson, setPolicyJson] = useState("");
   const [loading, setLoading] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResponse | ProcessingResponse | null>(null);
@@ -104,10 +105,10 @@ export default function DashboardPage() {
   const [isReviewing, setIsReviewing] = useState(false);
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
-  
+
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
-  
+
   const [reportLoading, setReportLoading] = useState(false);
   const [reportMarkdown, setReportMarkdown] = useState<string | null>(null);
   const [reportModalOpen, setReportModalOpen] = useState(false);
@@ -144,7 +145,7 @@ export default function DashboardPage() {
     try {
       if (applyRedaction) {
         // Two-phase workflow for all media types
-        const res = await scanFile(file, mediaType);
+        const res = await scanFile(file, mediaType, useLlm);
         setScanResult(res);
         setIsReviewing(true);
       } else {
@@ -154,6 +155,7 @@ export default function DashboardPage() {
           apply_redaction: applyRedaction,
           score_threshold: threshold,
           policy_json: mode === "policy" ? policyJson : undefined,
+          use_llm: useLlm,
         });
         setScanResult(res);
 
@@ -171,7 +173,7 @@ export default function DashboardPage() {
           result: res,
         });
         localStorage.setItem("scan_history", JSON.stringify(history.slice(0, 50)));
-        
+
         // Asynchronously fetch Proactive Advice
         if (res.flagged_entities.length > 0) {
           setLoadingSuggestions(true);
@@ -202,7 +204,7 @@ export default function DashboardPage() {
     if (!scanResult || !("scan_id" in scanResult)) return;
     setLoading(true);
     setError("");
-    
+
     try {
       const res = await redactFile({
         scan_id: scanResult.scan_id,
@@ -223,10 +225,10 @@ export default function DashboardPage() {
         riskScore: scanResult.risk_score,
         entityCount: scanResult.flagged_entities.length,
         timestamp: new Date().toISOString(),
-        result: { 
-          ...scanResult, 
-          object_store_key: res.object_key, 
-          download_url: res.download_url 
+        result: {
+          ...scanResult,
+          object_store_key: res.object_key,
+          download_url: res.download_url
         },
       });
       localStorage.setItem("scan_history", JSON.stringify(history.slice(0, 50)));
@@ -403,6 +405,25 @@ export default function DashboardPage() {
             />
             Apply redaction to file
           </label>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 13,
+              cursor: "pointer",
+              color: "var(--text-secondary)",
+              marginTop: 8,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={useLlm}
+              onChange={(e) => setUseLlm(e.target.checked)}
+              style={{ accentColor: "var(--accent)" }}
+            />
+            Use AI/LLM for enhanced detection
+          </label>
         </div>
       </div>
 
@@ -456,20 +477,20 @@ export default function DashboardPage() {
 
       {/* Interactive Review UI */}
       {isReviewing && scanResult && file && mediaType === "image" && (
-        <ImageRedactionEditor 
-          file={file} 
-          scanResult={scanResult as ScanResponse} 
-          onRedact={handleRedactConfirm} 
-          onCancel={() => setIsReviewing(false)} 
+        <ImageRedactionEditor
+          file={file}
+          scanResult={scanResult as ScanResponse}
+          onRedact={handleRedactConfirm}
+          onCancel={() => setIsReviewing(false)}
         />
       )}
-      
+
       {isReviewing && scanResult && file && mediaType !== "image" && (
-        <ListRedactionEditor 
-          file={file} 
-          scanResult={scanResult as ScanResponse} 
-          onRedact={handleRedactConfirm} 
-          onCancel={() => setIsReviewing(false)} 
+        <ListRedactionEditor
+          file={file}
+          scanResult={scanResult as ScanResponse}
+          onRedact={handleRedactConfirm}
+          onCancel={() => setIsReviewing(false)}
         />
       )}
 
@@ -602,7 +623,7 @@ export default function DashboardPage() {
 
             {/* Details */}
             <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-              
+
               {/* Proactive AI Advice */}
               {(suggestions.length > 0 || loadingSuggestions) && (
                 <div className="glass-card" style={{ padding: 20, border: "1px solid var(--accent)", background: "rgba(14, 165, 233, 0.03)" }}>
@@ -781,14 +802,14 @@ export default function DashboardPage() {
               <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
                 <ClipboardIcon size={20} color="var(--accent)" /> Smart Privacy Report
               </h3>
-              <button 
+              <button
                 onClick={() => setReportModalOpen(false)}
                 style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 24, padding: "0 8px" }}
               >
                 &times;
               </button>
             </div>
-            
+
             <div style={{ padding: 24, overflowY: "auto", flex: 1, backgroundColor: "var(--bg-secondary)" }}>
               {reportLoading ? (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, color: "var(--text-muted)" }}>
@@ -796,13 +817,13 @@ export default function DashboardPage() {
                   <p>Analyzing compliance risks and generating report...</p>
                 </div>
               ) : reportMarkdown ? (
-                <pre style={{ 
-                  fontSize: 14, 
-                  lineHeight: 1.6, 
-                  color: "var(--text)", 
-                  whiteSpace: "pre-wrap", 
-                  fontFamily: "inherit", 
-                  margin: 0 
+                <pre style={{
+                  fontSize: 14,
+                  lineHeight: 1.6,
+                  color: "var(--text)",
+                  whiteSpace: "pre-wrap",
+                  fontFamily: "inherit",
+                  margin: 0
                 }}>
                   {reportMarkdown}
                 </pre>
