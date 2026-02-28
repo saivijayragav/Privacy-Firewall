@@ -54,10 +54,17 @@ class ContextualIntelligenceService:
             for i, e in enumerate(entities[:50])  # cap at 50
         )
         prompt = (
-            "You are a privacy classifier. For EACH entity below, decide if it is truly sensitive PII.\n"
+            "You are an Expert Data Privacy and Security Auditor for an organizational firewall.\n"
+            "Your module's job is to evaluate if extracted data points are genuinely sensitive personally identifiable information (PII), secret credentials, or protected financial data, or if they are safe/false-positives based entirely on their surrounding document context.\n"
+            "Evaluate EACH entity through the lens of external global privacy frameworks (GDPR, HIPAA, CCPA, PCI-DSS, India DPDP Act) and consider how a malicious external actor (e.g., hacker, phisher) might exploit this specific data point combined with its context.\n"
+            "Severity Guidelines:\n"
+            "- High: Direct identifiers (SSN, Passport, Credit Cards, API Keys, Passwords, Health Records). High exploitation value.\n"
+            "- Medium: Indirect identifiers (Emails, Phone numbers, Physical Addresses, Names) that can single out an individual or aid in spear-phishing.\n"
+            "- Low: Public data, generic business addresses, internal non-sensitive codes, or false positives.\n\n"
             "Return strict JSON: a list of objects with keys: "
             "entity_id (string), is_sensitive (boolean), severity_level (high|medium|low), "
             "confidence_score (0..1), reasoning (string).\n"
+            "Your reasoning should briefly explain WHY the context makes this sensitive or safe, citing potential regulatory or security implications.\n"
             "No markdown, no extra prose. Return one object per entity in the same order.\n\n"
             f"Entities:\n{entity_list_str}\n\n"
             f"Document context (first 6000 chars):\n{full_text[:6000]}"
@@ -140,16 +147,20 @@ class ContextualIntelligenceService:
         for chunk_offset, chunk_text in chunks:
             already_str = ", ".join(already_found[:30]) if already_found else "none"
             prompt = (
-                "You are a PII detector. Analyze the following text and find ALL personally identifiable information "
-                "that is NOT already in this list of already-detected values: [" + already_str + "].\n"
+                "You are an Expert Data Privacy and Security Auditor.\n"
+                "Your objective is to thoroughly scan the text for ANY sensitive data, credentials, financial records, or personal identifiers that a traditional regex scanner might have missed.\n"
+                "Consider high-value external targets for attackers such as bespoke authentication tokens (AWS/GCP structures), healthcare ICD-10 codes, proprietary intellectual property tags, unformatted physical addresses, contextual names (e.g., 'Client: John'), or internal project codes if marked confidential.\n"
+                "Evaluate findings according to global privacy frameworks (GDPR, HIPAA, CCPA, PCI-DSS) and consider how a malicious external actor could exploit them.\n"
+                "DO NOT extract any data that is already in this list of already-detected values: [" + already_str + "].\n"
                 "Return strict JSON: a list of objects with keys: "
                 'type (string, e.g. "name", "address", "dob", "signature", "account_number", etc.), '
                 "value (the exact text found), "
                 "is_sensitive (boolean), "
                 'severity_level ("high"|"medium"|"low"), '
                 "confidence_score (0..1), "
-                "reasoning (string).\n"
+                "reasoning (string explain WHY this is a risk, citing regulatory frameworks or attacker exploitation value).\n"
                 "Return [] if nothing new found. No markdown, no extra prose.\n\n"
+                "CRITICAL: Only extract EXACT substrings that appear in the text. Do not hallucinate or format the values.\n\n"
                 f"Text to analyze:\n{chunk_text}"
             )
 
@@ -174,27 +185,23 @@ class ContextualIntelligenceService:
                     value = str(item.get("value", "")).strip()
                     if not value or not item.get("is_sensitive", False):
                         continue
-                    # Find ALL occurrences using re so we redact every instance
-                    import re
-                    for m in re.finditer(re.escape(value), full_text):
-                        occurrence_key = (value, m.start())
-                        if occurrence_key in seen_values:
-                            continue
-                        seen_values.add(occurrence_key)
-                        loc = LocationReference(
-                            page=1,
-                            start_char=m.start(),
-                            end_char=m.end(),
+                    # Instead of absolute finditer which breaks page-bounds,
+                    # yield a single abstract entity. `_propagate_entities` will
+                    # correctly materialize it across all pages and proper bboxes.
+                    if value in seen_values:
+                        continue
+                    seen_values.add(value)
+                    
+                    loc = LocationReference(page=1)
+                    all_additional.append(
+                        DetectedEntity(
+                            entity_id=uuid4().hex,
+                            type=f"llm_{item.get('type', 'unknown')}".lower(),
+                            raw_value=value,
+                            location_reference=loc,
+                            confidence_score=min(float(item.get("confidence_score", 0.7)), 1.0),
                         )
-                        all_additional.append(
-                            DetectedEntity(
-                                entity_id=uuid4().hex,
-                                type=f"llm_{item.get('type', 'unknown')}".lower(),
-                                raw_value=value,
-                                location_reference=loc,
-                                confidence_score=min(float(item.get("confidence_score", 0.7)), 1.0),
-                            )
-                        )
+                    )
             except Exception:
                 continue
 
@@ -212,17 +219,49 @@ class ContextualIntelligenceService:
 
     def _heuristic_fallback(self, entity: DetectedEntity) -> ContextualEvaluation:
         high_tokens = {
+            # Identity documents
             "credit_card", "aadhaar", "aadhaar_vid", "aadhaar_enrolment",
             "ssn", "iban", "bank_account", "pan", "passport",
+            "passport_in", "passport_us", "passport_eu",
             "driving_license", "voter_id", "face", "qr_code",
             "date_of_birth", "parent_name",
+            # Financial
+            "credit_card_visa", "credit_card_mastercard", "credit_card_amex",
+            "credit_card_discover", "credit_card_diners", "credit_card_jcb",
+            "credit_card_rupay", "credit_card_generic",
+            "bank_account_in", "gstin", "cin",
+            # International IDs
+            "nino_uk", "sin_ca", "tfn_au", "cpf_br", "curp_mx",
+            "rrn_kr", "nric_sg", "hkid", "sa_id", "itin_us",
+            # Credentials & secrets
+            "aws_access_key", "aws_secret_key", "google_api_key",
+            "github_pat", "stripe_key", "private_key", "jwt_token",
+            "api_key_generic", "password_in_config",
+            # Medical
+            "medicare_mbi", "medical_record", "health_insurance_id",
         }
         medium_tokens = {
-            "phone_number", "email_address", "email", "phone", "address",
-            "upi_id", "ifsc", "swift", "vehicle_reg", "pin_code", "gender",
-            "person",
+            "phone_number", "email_address", "email", "phone", "phone_in",
+            "address", "upi_id", "ifsc", "swift", "vehicle_reg",
+            "pin_code", "gender", "person",
+            # India-specific
+            "tan", "fssai_license", "ration_card", "epf_uan",
+            "epf_member_id", "esic_code", "ein_us",
+            "fir_number", "case_number",
+            # Technical / network
+            "ip_address_v4", "mac_address", "imei",
+            "crypto_btc", "crypto_eth",
+            # Medical
+            "npi_us", "dea_number", "nhs_number",
+            # Personal
+            "age", "blood_group",
+            # Location
+            "gps_coordinates", "zip_code_us", "postcode_uk",
         }
-        low_not_sensitive = {"date_time", "nrp", "location", "url"}
+        low_not_sensitive = {
+            "date_time", "nrp", "location", "url",
+            "ip_address_v6", "vin", "license_plate_us",
+        }
 
         entity_type = entity.type.lower()
 

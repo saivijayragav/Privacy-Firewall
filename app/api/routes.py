@@ -549,3 +549,40 @@ async def chat(
         history=history,
         scan_result=scan_result,
     )
+
+
+@router.post("/test/auto_redact")
+async def test_auto_redact(
+    file: UploadFile = File(...),
+    use_llm: bool = Form(True),
+    pipeline: PrivacyFirewallPipeline = Depends(get_pipeline),
+):
+    """Test endpoint: upload a file, automatically redact it, and save locally."""
+    from app.domain.models import ProcessingMode
+    from app.domain.contracts import ProcessOptions
+    import mimetypes
+
+    options = ProcessOptions(
+        mode=ProcessingMode.AUTO_REDACT,
+        apply_redaction=True,
+        score_threshold=0.0,  # Force redaction for ANYTHING found in test via threshold override
+        use_llm=use_llm,
+    )
+    
+    path = await _persist_upload(pipeline, file)
+    
+    # Check mime type to figure out document vs image
+    content_type = file.content_type or mimetypes.guess_type(path)[0] or "application/octet-stream"
+    
+    if content_type.startswith("image/"):
+        response = await pipeline.process_image(path, options)
+    else:
+        response = await pipeline.process_document(path, options)
+        
+    return {
+        "message": "File redacted and saved successfully" if response.output_file_path else "No sensitive data found, no redaction needed",
+        "original_file": file.filename,
+        "redacted_file_path": response.output_file_path,
+        "flagged_entities_count": len(response.flagged_entities),
+        "risk_score": response.risk_score
+    }
