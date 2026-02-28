@@ -112,7 +112,14 @@ class RedactionService:
 
             audio = AudioSegment.from_file(source)
             redacted = 0
-            for start_sec, end_sec in plan.audio_timestamps:
+            
+            for region in plan.redaction_regions:
+                if region.location_reference.start_sec is None:
+                    continue
+                    
+                start_sec = float(region.location_reference.start_sec)
+                end_sec = float(region.location_reference.end_sec or start_sec)
+                
                 start_ms = int(start_sec * 1000)
                 end_ms = int(end_sec * 1000)
                 if end_ms <= start_ms:
@@ -121,7 +128,8 @@ class RedactionService:
                 bleep = Sine(1000).to_audio_segment(duration=duration).apply_gain(-6)
                 audio = audio[:start_ms] + bleep + audio[end_ms:]
                 redacted += 1
+                
             audio.export(output, format=source.suffix.replace(".", "") or "wav")
             return {"status": "success", "segments_redacted": redacted}
         except Exception as exc:
-            return {"status": "failed", "reason": str(exc)}
+            return {"status": "failed", "reason": f"FFmpeg/Pydub Audio Error: {str(exc)}"}

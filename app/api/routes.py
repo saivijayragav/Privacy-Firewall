@@ -147,7 +147,7 @@ async def redact(
     )
 
     if output_path is None or not output_path.exists():
-        raise HTTPException(status_code=422, detail=report.get("status", "redaction_failed"))
+        raise HTTPException(status_code=422, detail=report.get("reason", report.get("status", "redaction_failed")))
 
     # Generate presigned download URL if R2 upload succeeded
     download_url: str | None = None
