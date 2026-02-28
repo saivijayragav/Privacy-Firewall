@@ -56,7 +56,7 @@ class ChatbotService:
         scan_result: ScanResponse | None = None,
     ) -> ChatResponse:
         """
-        Generate a conversational reply.
+        Generate a conversational reply using LangChain.
 
         Parameters
         ----------
@@ -68,11 +68,43 @@ class ChatbotService:
             If a file was scanned in this request, pass the result so the LLM
             can reference it.
         """
-        messages = self._build_messages(user_message, history, scan_result)
+        try:
+            from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+            from langchain_core.messages import HumanMessage, AIMessage
+            from app.services.llm import get_langchain_llm
 
-        # Try the LLM; fall back to a structured template if unavailable.
-        reply_text = await self._call_llm(messages)
-        if reply_text is None:
+            # Format History
+            chat_history = []
+            if history:
+                for m in history:
+                    if m.role == "user":
+                        chat_history.append(HumanMessage(content=m.content))
+                    else:
+                        chat_history.append(AIMessage(content=m.content))
+            
+            # Format Context
+            scan_context = "No scan results provided."
+            if scan_result:
+                scan_context = self._format_scan_context(scan_result)
+
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", SYSTEM_PROMPT + "\n\nAnalyzed Data Context:\n{scan_context}"),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("user", "{user_message}")
+            ])
+
+            llm = get_langchain_llm(self.settings)
+            chain = prompt | llm
+
+            response = await chain.ainvoke({
+                "scan_context": scan_context,
+                "chat_history": chat_history,
+                "user_message": user_message
+            })
+            reply_text = response.content
+        except Exception as e:
+            import logging
+            logging.error(f"Chatbot LLM Error: {e}")
             reply_text = self._fallback_reply(user_message, scan_result)
 
         # Build the response, attaching scan metadata if available.
@@ -87,29 +119,6 @@ class ChatbotService:
         )
 
     # ── internals ────────────────────────────────────────────────────
-
-    def _build_messages(
-        self,
-        user_message: str,
-        history: list[ChatMessage] | None,
-        scan_result: ScanResponse | None,
-    ) -> list[dict[str, str]]:
-        """Assemble the message array sent to the LLM."""
-        msgs: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-
-        # Inject scan context as a system message so the LLM can reference it.
-        if scan_result:
-            context = self._format_scan_context(scan_result)
-            msgs.append({"role": "system", "content": context})
-
-        # Replay conversation history.
-        if history:
-            for m in history:
-                msgs.append({"role": m.role, "content": m.content})
-
-        # Current user message.
-        msgs.append({"role": "user", "content": user_message})
-        return msgs
 
     @staticmethod
     def _format_scan_context(scan: ScanResponse) -> str:
@@ -142,31 +151,7 @@ class ChatbotService:
         )
         return "\n".join(lines)
 
-    async def _call_llm(self, messages: list[dict[str, str]]) -> str | None:
-        """Call the AIPipe LLM. Returns None on failure so the caller can fall back."""
-        if not self.settings.aipipe_token:
-            return None
 
-        url = f"{self.settings.aipipe_base_url}/openrouter/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.settings.aipipe_token}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.settings.aipipe_model,
-            "messages": messages,
-            "max_tokens": 1024,
-            "temperature": 0.4,
-        }
-
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-                return data["choices"][0]["message"]["content"]
-        except Exception:
-            return None
 
     @staticmethod
     def _fallback_reply(user_message: str, scan_result: ScanResponse | None) -> str:

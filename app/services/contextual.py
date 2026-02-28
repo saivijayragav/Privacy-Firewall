@@ -53,7 +53,7 @@ class ContextualIntelligenceService:
             f"  {i+1}. id={e.entity_id} type={e.type} value={e.raw_value}"
             for i, e in enumerate(entities[:50])  # cap at 50
         )
-        prompt = (
+        prompt_text = (
             "You are an Expert Data Privacy and Security Auditor for an organizational firewall.\n"
             "Your module's job is to evaluate if extracted data points are genuinely sensitive personally identifiable information (PII), secret credentials, or protected financial data, or if they are safe/false-positives based entirely on their surrounding document context.\n"
             "Evaluate EACH entity through the lens of external global privacy frameworks (GDPR, HIPAA, CCPA, PCI-DSS, India DPDP Act) and consider how a malicious external actor (e.g., hacker, phisher) might exploit this specific data point combined with its context.\n"
@@ -61,60 +61,47 @@ class ContextualIntelligenceService:
             "- High: Direct identifiers (SSN, Passport, Credit Cards, API Keys, Passwords, Health Records). High exploitation value.\n"
             "- Medium: Indirect identifiers (Emails, Phone numbers, Physical Addresses, Names) that can single out an individual or aid in spear-phishing.\n"
             "- Low: Public data, generic business addresses, internal non-sensitive codes, or false positives.\n\n"
-            "Return strict JSON: a list of objects with keys: "
-            "entity_id (string), is_sensitive (boolean), severity_level (high|medium|low), "
-            "confidence_score (0..1), reasoning (string).\n"
-            "Your reasoning should briefly explain WHY the context makes this sensitive or safe, citing potential regulatory or security implications.\n"
-            "No markdown, no extra prose. Return one object per entity in the same order.\n\n"
-            f"Entities:\n{entity_list_str}\n\n"
-            f"Document context (first 6000 chars):\n{full_text[:6000]}"
+            "Your reasoning should briefly explain WHY the context makes this sensitive or safe, citing potential regulatory or security implications.\n\n"
+            "Entities:\n{entities}\n\n"
+            "Document context (first 6000 chars):\n{context}"
         )
 
-        url = f"{self.settings.aipipe_base_url}/openrouter/v1/responses"
-        headers = {
-            "Authorization": f"Bearer {self.settings.aipipe_token}",
-            "Content-Type": "application/json",
-        }
-        payload = {"model": self.settings.aipipe_model, "input": prompt}
-
         try:
-            client = await self._get_client()
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            text_out = self._extract_output_text(data)
-            items = json.loads(text_out)
-            if not isinstance(items, list) or len(items) == 0:
+            from pydantic import BaseModel, Field
+            from langchain_core.prompts import PromptTemplate
+            from app.services.llm import get_langchain_llm
+
+            class ClassificationResult(BaseModel):
+                items: list[ContextualEvaluation] = Field(description="List of classified entities")
+
+            llm = get_langchain_llm(self.settings)
+            structured_llm = llm.with_structured_output(ClassificationResult)
+            
+            prompt = PromptTemplate.from_template(prompt_text)
+            chain = prompt | structured_llm
+
+            response_obj = await chain.ainvoke({
+                "context": full_text[:6000],
+                "entities": entity_list_str
+            })
+            
+            if not response_obj or not response_obj.items:
                 return None
 
             # Index by entity_id for lookup
-            llm_map: dict[str, dict] = {}
-            for item in items:
-                eid = item.get("entity_id", "")
-                if eid:
-                    llm_map[eid] = item
+            llm_map: dict[str, ContextualEvaluation] = {item.entity_id: item for item in response_obj.items}
 
             results: list[ContextualEvaluation] = []
             for entity in entities:
                 if entity.entity_id in llm_map:
-                    parsed = llm_map[entity.entity_id]
-                    try:
-                        severity = SeverityLevel(parsed.get("severity_level", "low").lower())
-                        results.append(ContextualEvaluation(
-                            entity_id=entity.entity_id,
-                            is_sensitive=bool(parsed.get("is_sensitive", True)),
-                            severity_level=severity,
-                            confidence_score=float(parsed.get("confidence_score", entity.confidence_score)),
-                            reasoning=str(parsed.get("reasoning", "LLM batch decision.")),
-                        ))
-                        continue
-                    except Exception:
-                        pass
-                # Fallback for this entity
-                results.append(self._heuristic_fallback(entity))
+                    results.append(llm_map[entity.entity_id])
+                else:
+                    # Fallback for this entity
+                    results.append(self._heuristic_fallback(entity))
             return results
-        except Exception:
-            self._api_available = False  # mark as down, skip future calls
+        except Exception as e:
+            import logging
+            logging.error(f"LLM Classification Error: {e}")
             return None
 
     async def discover_additional_pii(self, full_text: str, already_found: list[str]) -> list[DetectedEntity]:
@@ -146,44 +133,50 @@ class ContextualIntelligenceService:
 
         for chunk_offset, chunk_text in chunks:
             already_str = ", ".join(already_found[:30]) if already_found else "none"
-            prompt = (
+            prompt_text = (
                 "You are an Expert Data Privacy and Security Auditor.\n"
                 "Your objective is to thoroughly scan the text for ANY sensitive data, credentials, financial records, or personal identifiers that a traditional regex scanner might have missed.\n"
                 "Consider high-value external targets for attackers such as bespoke authentication tokens (AWS/GCP structures), healthcare ICD-10 codes, proprietary intellectual property tags, unformatted physical addresses, contextual names (e.g., 'Client: John'), or internal project codes if marked confidential.\n"
                 "Evaluate findings according to global privacy frameworks (GDPR, HIPAA, CCPA, PCI-DSS) and consider how a malicious external actor could exploit them.\n"
-                "DO NOT extract any data that is already in this list of already-detected values: [" + already_str + "].\n"
-                "Return strict JSON: a list of objects with keys: "
-                'type (string, e.g. "name", "address", "dob", "signature", "account_number", etc.), '
-                "value (the exact text found), "
-                "is_sensitive (boolean), "
-                'severity_level ("high"|"medium"|"low"), '
-                "confidence_score (0..1), "
-                "reasoning (string explain WHY this is a risk, citing regulatory frameworks or attacker exploitation value).\n"
-                "Return [] if nothing new found. No markdown, no extra prose.\n\n"
+                "DO NOT extract any data that is already in this list of already-detected values: [{already}].\n"
                 "CRITICAL: Only extract EXACT substrings that appear in the text. Do not hallucinate or format the values.\n\n"
-                f"Text to analyze:\n{chunk_text}"
+                "Text to analyze:\n{context}"
             )
 
-            url = f"{self.settings.aipipe_base_url}/openrouter/v1/responses"
-            headers = {
-                "Authorization": f"Bearer {self.settings.aipipe_token}",
-                "Content-Type": "application/json",
-            }
-            payload = {"model": self.settings.aipipe_model, "input": prompt}
-
             try:
-                client = await self._get_client()
-                response = await client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                data = response.json()
-                text_out = self._extract_output_text(data)
-                items = json.loads(text_out)
-                if not isinstance(items, list):
+                from pydantic import BaseModel, Field
+                from langchain_core.prompts import PromptTemplate
+                from app.services.llm import get_langchain_llm
+                from app.domain.models import SeverityLevel
+
+                class DiscoveryItem(BaseModel):
+                    type: str = Field(description='Type, e.g. "name", "address", "dob", "signature", "account_number", etc.')
+                    value: str = Field(description="The exact text found")
+                    is_sensitive: bool = Field(description="Boolean indicating if it is sensitive")
+                    severity_level: SeverityLevel = Field(description="Severity Level")
+                    confidence_score: float = Field(description="0..1 rating")
+                    reasoning: str = Field(description="Explanation of WHY this is a risk")
+
+                class DiscoveryResult(BaseModel):
+                    items: list[DiscoveryItem] = Field(description="List of discovered entities")
+
+                llm = get_langchain_llm(self.settings)
+                structured_llm = llm.with_structured_output(DiscoveryResult)
+                
+                prompt = PromptTemplate.from_template(prompt_text)
+                chain = prompt | structured_llm
+
+                response_obj = await chain.ainvoke({
+                    "already": already_str,
+                    "context": chunk_text
+                })
+                
+                if not response_obj or not response_obj.items:
                     continue
 
-                for item in items:
-                    value = str(item.get("value", "")).strip()
-                    if not value or not item.get("is_sensitive", False):
+                for item in response_obj.items:
+                    value = str(item.value).strip()
+                    if not value or not item.is_sensitive:
                         continue
                     # Instead of absolute finditer which breaks page-bounds,
                     # yield a single abstract entity. `_propagate_entities` will
@@ -196,13 +189,15 @@ class ContextualIntelligenceService:
                     all_additional.append(
                         DetectedEntity(
                             entity_id=uuid4().hex,
-                            type=f"llm_{item.get('type', 'unknown')}".lower(),
+                            type=f"llm_{item.type}".lower(),
                             raw_value=value,
                             location_reference=loc,
-                            confidence_score=min(float(item.get("confidence_score", 0.7)), 1.0),
+                            confidence_score=float(item.confidence_score),
                         )
                     )
-            except Exception:
+            except Exception as e:
+                import logging
+                logging.error(f"LLM Discovery Error: {e}")
                 continue
 
         return all_additional
