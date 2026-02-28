@@ -34,12 +34,12 @@ class ContextualIntelligenceService:
             self._api_available = False
         return self._api_available
 
-    async def classify(self, entities: list[DetectedEntity], full_text: str) -> list[ContextualEvaluation]:
+    async def classify(self, entities: list[DetectedEntity], full_text: str, *, use_llm: bool = True) -> list[ContextualEvaluation]:
         if not entities:
             return []
 
-        # Try batched LLM classification first
-        if await self._is_api_reachable():
+        # Try batched LLM classification first (only when LLM mode is enabled)
+        if use_llm and await self._is_api_reachable():
             result = await self._classify_batch(entities, full_text)
             if result is not None:
                 return result

@@ -65,22 +65,22 @@ class PrivacyFirewallPipeline:
     # Two-phase: Scan (detection only, no file mutation)
     # ────────────────────────────────────────────────────────────────
 
-    async def scan_document(self, file_path: Path) -> ScanResponse:
+    async def scan_document(self, file_path: Path, *, use_llm: bool = True) -> ScanResponse:
         extraction = self.extractor.extract_document(file_path)
-        return await self._scan(extraction, MediaType.DOCUMENT)
+        return await self._scan(extraction, MediaType.DOCUMENT, use_llm=use_llm)
 
-    async def scan_image(self, file_path: Path) -> ScanResponse:
+    async def scan_image(self, file_path: Path, *, use_llm: bool = True) -> ScanResponse:
         extraction = self.extractor.extract_image(file_path)
-        return await self._scan(extraction, MediaType.IMAGE)
+        return await self._scan(extraction, MediaType.IMAGE, use_llm=use_llm)
 
-    async def scan_audio(self, file_path: Path) -> ScanResponse:
+    async def scan_audio(self, file_path: Path, *, use_llm: bool = True) -> ScanResponse:
         extraction = self.extractor.extract_audio(file_path)
-        return await self._scan(extraction, MediaType.AUDIO)
+        return await self._scan(extraction, MediaType.AUDIO, use_llm=use_llm)
 
-    async def _scan(self, extraction: ExtractionOutput, media_type: MediaType) -> ScanResponse:
+    async def _scan(self, extraction: ExtractionOutput, media_type: MediaType, *, use_llm: bool = True) -> ScanResponse:
         """Run the full detection + classification pipeline but do NOT redact."""
         audit_log, reasoning_trace, flagged, risk_score, warning_message = await self._detect_and_classify(
-            extraction, media_type,
+            extraction, media_type, use_llm=use_llm,
         )
 
         recommended_plan = (
@@ -230,7 +230,7 @@ class PrivacyFirewallPipeline:
 
     async def _process(self, extraction, media_type: MediaType, options: ProcessOptions) -> ProcessingResponse:
         audit_log, reasoning_trace, flagged, risk_score, warning_message = await self._detect_and_classify(
-            extraction, media_type,
+            extraction, media_type, use_llm=options.use_llm,
         )
 
         should_redact = self.decision_engine.should_redact(
@@ -275,7 +275,7 @@ class PrivacyFirewallPipeline:
         )
 
     async def _detect_and_classify(
-        self, extraction: ExtractionOutput, media_type: MediaType,
+        self, extraction: ExtractionOutput, media_type: MediaType, *, use_llm: bool = True,
     ) -> tuple[list[AuditEvent], list[str], list[FlaggedEntity], float, str | None]:
         """Shared detection + classification logic used by both _process and _scan."""
         audit_log: list[AuditEvent] = []
@@ -322,22 +322,23 @@ class PrivacyFirewallPipeline:
                 audit_log.append(AuditEvent(stage="qr_code_detection", details={"count": qr_count}))
 
         # ---- LLM catch-all: discover PII missed by regex/Presidio ----
-        already_found_values = [e.raw_value for e in entities]
-        llm_extra = await self.contextual.discover_additional_pii(full_text, already_found_values)
-        if llm_extra:
-            # Build offset maps per page so LLM entities get correct bboxes
-            llm_pages: set[int] = {(ent.location_reference.page or 1) for ent in llm_extra}
-            llm_offset_maps: dict[int, list[tuple[int, int, int]]] = {}
-            for pg in llm_pages:
-                _, omap = _build_segment_offset_map(
-                    extraction.text_segments, extraction.bounding_boxes, pg,
-                )
-                llm_offset_maps[pg] = omap
-            for ent in llm_extra:
-                pg = ent.location_reference.page or 1
-                map_bbox_by_offset(ent, llm_offset_maps.get(pg, []), extraction.bounding_boxes)
-            entities.extend(llm_extra)
-            audit_log.append(AuditEvent(stage="llm_pii_discovery", details={"additional_count": len(llm_extra)}))
+        if use_llm:
+            already_found_values = [e.raw_value for e in entities]
+            llm_extra = await self.contextual.discover_additional_pii(full_text, already_found_values)
+            if llm_extra:
+                # Build offset maps per page so LLM entities get correct bboxes
+                llm_pages: set[int] = {(ent.location_reference.page or 1) for ent in llm_extra}
+                llm_offset_maps: dict[int, list[tuple[int, int, int]]] = {}
+                for pg in llm_pages:
+                    _, omap = _build_segment_offset_map(
+                        extraction.text_segments, extraction.bounding_boxes, pg,
+                    )
+                    llm_offset_maps[pg] = omap
+                for ent in llm_extra:
+                    pg = ent.location_reference.page or 1
+                    map_bbox_by_offset(ent, llm_offset_maps.get(pg, []), extraction.bounding_boxes)
+                entities.extend(llm_extra)
+                audit_log.append(AuditEvent(stage="llm_pii_discovery", details={"additional_count": len(llm_extra)}))
 
         # ---- Entity propagation: find detected values in additional bboxes ----
         propagated = self._propagate_entities(entities, extraction.bounding_boxes)
@@ -345,7 +346,7 @@ class PrivacyFirewallPipeline:
             entities.extend(propagated)
             audit_log.append(AuditEvent(stage="entity_propagation", details={"additional_count": len(propagated)}))
 
-        contextual = await self.contextual.classify(entities, full_text)
+        contextual = await self.contextual.classify(entities, full_text, use_llm=use_llm)
         audit_log.append(AuditEvent(stage="contextual_classification", details={"count": len(contextual)}))
 
         eval_by_id = {item.entity_id: item for item in contextual}

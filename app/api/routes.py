@@ -22,7 +22,7 @@ from app.services.pipeline import PrivacyFirewallPipeline
 router = APIRouter()
 
 
-def _build_options(mode: ProcessingMode, apply_redaction: bool, score_threshold: float | None, policy_json: str | None) -> ProcessOptions:
+def _build_options(mode: ProcessingMode, apply_redaction: bool, score_threshold: float | None, policy_json: str | None, use_llm: bool = True) -> ProcessOptions:
     policy = None
     if policy_json and policy_json.strip():
         try:
@@ -37,6 +37,7 @@ def _build_options(mode: ProcessingMode, apply_redaction: bool, score_threshold:
         apply_redaction=apply_redaction,
         score_threshold=score_threshold,
         policy=policy,
+        use_llm=use_llm,
     )
 
 
@@ -52,9 +53,10 @@ async def process_document(
     apply_redaction: bool = Form(False),
     score_threshold: float | None = Form(default=None),
     policy_json: str | None = Form(default=None),
+    use_llm: bool = Form(True),
     pipeline: PrivacyFirewallPipeline = Depends(get_pipeline),
 ) -> ProcessingResponse:
-    options = _build_options(mode, apply_redaction, score_threshold, policy_json)
+    options = _build_options(mode, apply_redaction, score_threshold, policy_json, use_llm)
     path = await _persist_upload(pipeline, file)
     return await pipeline.process_document(path, options)
 
@@ -66,9 +68,10 @@ async def process_image(
     apply_redaction: bool = Form(False),
     score_threshold: float | None = Form(default=None),
     policy_json: str | None = Form(default=None),
+    use_llm: bool = Form(True),
     pipeline: PrivacyFirewallPipeline = Depends(get_pipeline),
 ) -> ProcessingResponse:
-    options = _build_options(mode, apply_redaction, score_threshold, policy_json)
+    options = _build_options(mode, apply_redaction, score_threshold, policy_json, use_llm)
     path = await _persist_upload(pipeline, file)
     return await pipeline.process_image(path, options)
 
@@ -80,9 +83,10 @@ async def process_audio(
     apply_redaction: bool = Form(False),
     score_threshold: float | None = Form(default=None),
     policy_json: str | None = Form(default=None),
+    use_llm: bool = Form(True),
     pipeline: PrivacyFirewallPipeline = Depends(get_pipeline),
 ) -> ProcessingResponse:
-    options = _build_options(mode, apply_redaction, score_threshold, policy_json)
+    options = _build_options(mode, apply_redaction, score_threshold, policy_json, use_llm)
     path = await _persist_upload(pipeline, file)
     return await pipeline.process_audio(path, options)
 
@@ -95,28 +99,31 @@ async def process_audio(
 @router.post("/scan/document", response_model=ScanResponse)
 async def scan_document(
     file: UploadFile = File(...),
+    use_llm: bool = Form(True),
     pipeline: PrivacyFirewallPipeline = Depends(get_pipeline),
 ) -> ScanResponse:
     path = await _persist_upload(pipeline, file)
-    return await pipeline.scan_document(path)
+    return await pipeline.scan_document(path, use_llm=use_llm)
 
 
 @router.post("/scan/image", response_model=ScanResponse)
 async def scan_image(
     file: UploadFile = File(...),
+    use_llm: bool = Form(True),
     pipeline: PrivacyFirewallPipeline = Depends(get_pipeline),
 ) -> ScanResponse:
     path = await _persist_upload(pipeline, file)
-    return await pipeline.scan_image(path)
+    return await pipeline.scan_image(path, use_llm=use_llm)
 
 
 @router.post("/scan/audio", response_model=ScanResponse)
 async def scan_audio(
     file: UploadFile = File(...),
+    use_llm: bool = Form(True),
     pipeline: PrivacyFirewallPipeline = Depends(get_pipeline),
 ) -> ScanResponse:
     path = await _persist_upload(pipeline, file)
-    return await pipeline.scan_audio(path)
+    return await pipeline.scan_audio(path, use_llm=use_llm)
 
 
 # ────────────────────────────────────────────────────────────────────
