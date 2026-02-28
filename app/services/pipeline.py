@@ -328,22 +328,31 @@ class PrivacyFirewallPipeline:
             already_found_values = [e.raw_value for e in entities]
             llm_extra = await self.contextual.discover_additional_pii(full_text, already_found_values)
             if llm_extra:
-                # Build offset maps per page so LLM entities get correct bboxes
-                llm_pages: set[int] = {(ent.location_reference.page or 1) for ent in llm_extra}
-                llm_offset_maps: dict[int, list[tuple[int, int, int]]] = {}
-                for pg in llm_pages:
-                    _, omap = _build_segment_offset_map(
-                        extraction.text_segments, extraction.bounding_boxes, pg,
-                    )
-                    llm_offset_maps[pg] = omap
-                for ent in llm_extra:
-                    pg = ent.location_reference.page or 1
-                    map_bbox_by_offset(ent, llm_offset_maps.get(pg, []), extraction.bounding_boxes)
+                if media_type == MediaType.AUDIO:
+                    # Map audio timestamps for LLM generic detections
+                    for ent in llm_extra:
+                        for segment in extraction.timestamps:
+                            if ent.raw_value and ent.raw_value.lower() in segment.get("text", "").lower():
+                                ent.location_reference.start_sec = segment.get("start_sec")
+                                ent.location_reference.end_sec = segment.get("end_sec")
+                                break
+                else:
+                    # Build offset maps per page so LLM entities get correct bboxes
+                    llm_pages: set[int] = {(ent.location_reference.page or 1) for ent in llm_extra}
+                    llm_offset_maps: dict[int, list[tuple[int, int, int]]] = {}
+                    for pg in llm_pages:
+                        _, omap = _build_segment_offset_map(
+                            extraction.text_segments, extraction.bounding_boxes, pg,
+                        )
+                        llm_offset_maps[pg] = omap
+                    for ent in llm_extra:
+                        pg = ent.location_reference.page or 1
+                        map_bbox_by_offset(ent, llm_offset_maps.get(pg, []), extraction.bounding_boxes)
                 entities.extend(llm_extra)
                 audit_log.append(AuditEvent(stage="llm_pii_discovery", details={"additional_count": len(llm_extra)}))
 
-        # ---- Entity propagation: find detected values in additional bboxes ----
-        propagated = self._propagate_entities(entities, extraction.bounding_boxes)
+        # ---- Entity propagation: find detected values in additional bboxes/timestamps ----
+        propagated = self._propagate_entities(entities, extraction.bounding_boxes, extraction.timestamps)
         if propagated:
             entities.extend(propagated)
             audit_log.append(AuditEvent(stage="entity_propagation", details={"additional_count": len(propagated)}))
@@ -376,14 +385,15 @@ class PrivacyFirewallPipeline:
     def _propagate_entities(
         entities: list[DetectedEntity],
         bounding_boxes: list[dict],
+        timestamps: list[dict] | None = None,
     ) -> list[DetectedEntity]:
-        """Find additional bbox locations for already-detected entity values.
+        """Find additional bbox or timestamp locations for already-detected entity values.
 
         Handles:
-        - Exact value matches in bounding box texts not yet covered
+        - Exact value matches in bounding box or timestamp texts not yet covered
         - PAN prefix matching for OCR error tolerance (last char)
         """
-        if not entities or not bounding_boxes:
+        if not entities or (not bounding_boxes and not timestamps):
             return []
 
         # Types worth propagating across the document
@@ -410,52 +420,77 @@ class PrivacyFirewallPipeline:
         if not values_to_type and not pan_prefixes:
             return []
 
-        # Track which (bbox_key, type) already exists
-        covered: set[tuple[tuple, str]] = set()
+        # Track which (bbox_key/timestamp_key, type) already exists
+        covered: set = set()
         for ent in entities:
             if ent.location_reference.bbox:
                 covered.add((tuple(ent.location_reference.bbox), ent.type.lower()))
+            if ent.location_reference.start_sec is not None:
+                covered.add((ent.location_reference.start_sec, ent.type.lower()))
 
         new_entities: list[DetectedEntity] = []
 
-        for bb in bounding_boxes:
-            bb_text = bb.get("text", "")
-            bb_bbox = bb.get("bbox")
-            if not bb_bbox or not bb_text:
-                continue
-
-            bb_key = tuple(bb_bbox)
-
-            # Exact value match
-            for value, etype in values_to_type.items():
-                if (bb_key, etype) in covered:
+        if bounding_boxes:
+            for bb in bounding_boxes:
+                bb_text = bb.get("text", "")
+                bb_bbox = bb.get("bbox")
+                if not bb_bbox or not bb_text:
                     continue
-                if value in bb_text:
-                    new_entities.append(DetectedEntity(
-                        entity_id=uuid4().hex,
-                        type=etype,
-                        raw_value=value,
-                        location_reference=LocationReference(
-                            page=bb.get("page", 1), bbox=list(bb_bbox),
-                        ),
-                        confidence_score=0.80,
-                    ))
-                    covered.add((bb_key, etype))
 
-            # PAN prefix match (OCR error tolerance for last character)
-            if (bb_key, "pan") not in covered:
-                for prefix, full_pan in pan_prefixes.items():
-                    if prefix in bb_text:
+                bb_key = tuple(bb_bbox)
+
+                # Exact value match
+                for value, etype in values_to_type.items():
+                    if (bb_key, etype) in covered:
+                        continue
+                    if value in bb_text:
                         new_entities.append(DetectedEntity(
                             entity_id=uuid4().hex,
-                            type="pan",
-                            raw_value=full_pan,
+                            type=etype,
+                            raw_value=value,
                             location_reference=LocationReference(
                                 page=bb.get("page", 1), bbox=list(bb_bbox),
                             ),
-                            confidence_score=0.75,
+                            confidence_score=0.80,
                         ))
-                        covered.add((bb_key, "pan"))
-                        break
+                        covered.add((bb_key, etype))
+
+                # PAN prefix match (OCR error tolerance for last character)
+                if (bb_key, "pan") not in covered:
+                    for prefix, full_pan in pan_prefixes.items():
+                        if prefix in bb_text:
+                            new_entities.append(DetectedEntity(
+                                entity_id=uuid4().hex,
+                                type="pan",
+                                raw_value=full_pan,
+                                location_reference=LocationReference(
+                                    page=bb.get("page", 1), bbox=list(bb_bbox),
+                                ),
+                                confidence_score=0.75,
+                            ))
+                            covered.add((bb_key, "pan"))
+                            break
+
+        if timestamps:
+            for ts in timestamps:
+                ts_text = ts.get("text", "")
+                ts_start = ts.get("start_sec")
+                if ts_start is None or not ts_text:
+                    continue
+
+                for value, etype in values_to_type.items():
+                    if (ts_start, etype) in covered:
+                        continue
+                    if value.lower() in ts_text.lower():
+                        new_entities.append(DetectedEntity(
+                            entity_id=uuid4().hex,
+                            type=etype,
+                            raw_value=value,
+                            location_reference=LocationReference(
+                                page=1, start_sec=ts_start, end_sec=ts.get("end_sec")
+                            ),
+                            confidence_score=0.80,
+                        ))
+                        covered.add((ts_start, etype))
 
         return new_entities
