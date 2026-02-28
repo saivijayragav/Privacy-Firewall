@@ -13,6 +13,7 @@ import {
   MenuIcon,
   XIcon,
   TrendingUpIcon,
+  BrainIcon,
 } from "@/components/Icons";
 
 const NAV_ITEMS = [
@@ -20,6 +21,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/history", icon: <ClipboardIcon size={18} />, label: "Scan History" },
   { href: "/dashboard/policy", icon: <SettingsIcon size={18} />, label: "Policy Builder" },
   { href: "/dashboard/trends", icon: <TrendingUpIcon size={18} />, label: "Trends" },
+  { href: "/dashboard/chatbot", icon: <BrainIcon size={18} />, label: "AI Assistant" },
 ];
 
 export default function DashboardLayout({
@@ -78,7 +80,15 @@ export default function DashboardLayout({
 
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-logo">
-          <div className="icon"><ShieldIcon size={20} color="#0EA5E9" /></div>
+          <div className="icon">
+            {/* Using a cloud-hosted SVG icon instead of a local missing file */}
+            <img 
+               src="https://api.iconify.design/lucide:shield-check.svg?color=%230ea5e9" 
+               alt="PixelGuard Logo" 
+               width={24} 
+               height={24} 
+            />
+          </div>
           <h1>PixelGuard</h1>
         </div>
 

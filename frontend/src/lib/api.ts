@@ -306,3 +306,57 @@ export async function getPrivacySuggestions(
 
   return res.json();
 }
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatRequest {
+  message: string;
+  chat_history?: ChatMessage[];
+  scan_id?: string;
+  file?: File;
+  use_llm?: boolean;
+}
+
+export interface ChatResponse {
+  reply: string;
+  scan_id?: string;
+  has_sensitive_data: boolean;
+  risk_score?: number;
+  flagged_entities: Array<{
+    detected: { type: string; raw_value: string };
+    contextual: { severity_level: string; confidence_score: number; reasoning: string };
+  }>;
+}
+
+export async function chatWithAgent(req: ChatRequest): Promise<ChatResponse> {
+  const formData = new FormData();
+  formData.append("message", req.message);
+  
+  if (req.chat_history && req.chat_history.length > 0) {
+    formData.append("chat_history", JSON.stringify(req.chat_history));
+  }
+  if (req.scan_id) {
+    formData.append("scan_id", req.scan_id);
+  }
+  if (req.file) {
+    formData.append("file", req.file);
+  }
+  
+  // Default use_llm to true for chatbot
+  formData.append("use_llm", req.use_llm !== undefined ? String(req.use_llm) : "true");
+
+  const res = await fetch(`${API_BASE}/api/v1/chat`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Chat API error ${res.status}: ${text}`);
+  }
+
+  return res.json();
+}

@@ -15,6 +15,7 @@ import {
 } from "@/lib/api";
 import { useCallback, useRef, useState } from "react";
 import { ImageRedactionEditor } from "@/components/ImageRedactionEditor";
+import { PdfRedactionEditor } from "@/components/PdfRedactionEditor";
 import { ListRedactionEditor } from "@/components/ListRedactionEditor";
 import {
   FolderIcon,
@@ -152,7 +153,7 @@ export default function DashboardPage() {
         // Original workflow 
         const res = await processFile(file, mediaType, {
           mode,
-          apply_redaction: applyRedaction,
+          apply_redaction: mode === "auto_redact" || mode === "policy",
           score_threshold: threshold,
           policy_json: mode === "policy" ? policyJson : undefined,
           use_llm: useLlm,
@@ -174,8 +175,8 @@ export default function DashboardPage() {
         });
         localStorage.setItem("scan_history", JSON.stringify(history.slice(0, 50)));
 
-        // Asynchronously fetch Proactive Advice
-        if (res.flagged_entities.length > 0) {
+        // Asynchronously fetch Proactive Advice only for "warn" mode
+        if (mode === "warn" && res.flagged_entities.length > 0) {
           setLoadingSuggestions(true);
           getPrivacySuggestions({
             filename: file.name,
@@ -283,6 +284,10 @@ export default function DashboardPage() {
   const riskPercent = scanResult ? Math.round(scanResult.risk_score * 100) : 0;
   const circumference = 2 * Math.PI * 72;
   const dashOffset = circumference - (circumference * riskPercent) / 100;
+
+  // Determine the final redacted file source (from interactive review or auto-redact mode)
+  const finalDownloadUrl = redactResult?.download_url || (scanResult && "download_url" in scanResult ? scanResult.download_url : undefined);
+  const finalLocalPath = redactResult?.local_path || (scanResult && "output_file_path" in scanResult ? scanResult.output_file_path : undefined);
 
   return (
     <div>
@@ -403,7 +408,7 @@ export default function DashboardPage() {
               onChange={(e) => setApplyRedaction(e.target.checked)}
               style={{ accentColor: "var(--accent)" }}
             />
-            Apply redaction to file
+            Manually review before redaction
           </label>
           <label
             style={{
@@ -485,7 +490,16 @@ export default function DashboardPage() {
         />
       )}
 
-      {isReviewing && scanResult && file && mediaType !== "image" && (
+      {isReviewing && scanResult && file && file.type === "application/pdf" && (
+        <PdfRedactionEditor
+          file={file}
+          scanResult={scanResult as ScanResponse}
+          onRedact={handleRedactConfirm}
+          onCancel={() => setIsReviewing(false)}
+        />
+      )}
+
+      {isReviewing && scanResult && file && mediaType !== "image" && file.type !== "application/pdf" && (
         <ListRedactionEditor
           file={file}
           scanResult={scanResult as ScanResponse}
@@ -495,7 +509,7 @@ export default function DashboardPage() {
       )}
 
       {/* Before / After Preview (when Redaction is complete) */}
-      {!isReviewing && scanResult && (redactResult?.download_url || redactResult?.local_path) && (
+      {!isReviewing && scanResult && (finalDownloadUrl || finalLocalPath) && (
         <div style={{ marginTop: 40 }} className="fade-in">
           <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>Redaction Complete</h3>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
@@ -510,9 +524,9 @@ export default function DashboardPage() {
             {/* Redacted */}
             <div className="glass-card" style={{ padding: 16, border: "1px solid var(--accent)" }}>
               <div style={{ marginBottom: 12, fontWeight: 600, fontSize: 14, color: "var(--accent)" }}>Redacted (After)</div>
-              {mediaType === "image" && <img src={redactResult.download_url || `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent(redactResult.local_path || "")}`} alt="Redacted" style={{ width: "100%", borderRadius: 8 }} />}
-              {mediaType === "audio" && <audio controls src={redactResult.download_url || `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent(redactResult.local_path || "")}`} style={{ width: "100%" }} />}
-              {mediaType === "document" && <iframe src={redactResult.download_url || `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent(redactResult.local_path || "")}`} style={{ width: "100%", height: 400, border: "none", borderRadius: 8, background: "#fff" }} />}
+              {mediaType === "image" && <img src={finalDownloadUrl || `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent(finalLocalPath || "")}`} alt="Redacted" style={{ width: "100%", borderRadius: 8 }} />}
+              {mediaType === "audio" && <audio controls src={finalDownloadUrl || `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent(finalLocalPath || "")}`} style={{ width: "100%" }} />}
+              {mediaType === "document" && <iframe src={finalDownloadUrl || `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent(finalLocalPath || "")}`} style={{ width: "100%", height: 400, border: "none", borderRadius: 8, background: "#fff" }} />}
             </div>
           </div>
         </div>
@@ -600,9 +614,9 @@ export default function DashboardPage() {
               </div>
 
               <div style={{ marginTop: 16, display: "flex", gap: 12, flexWrap: "wrap" }}>
-                {(redactResult?.download_url || redactResult?.local_path || ("output_file_path" in scanResult && scanResult.output_file_path)) && (
+                {finalLocalPath && (
                   <a
-                    href={redactResult?.download_url || (redactResult?.local_path ? `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent(redactResult.local_path)}` : `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent((scanResult as ProcessingResponse).output_file_path || "")}`)}
+                    href={finalDownloadUrl || `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/download?path=${encodeURIComponent(finalLocalPath)}`}
                     className="btn btn-secondary btn-sm"
                     target="_blank"
                     rel="noreferrer"
