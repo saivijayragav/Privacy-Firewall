@@ -149,3 +149,48 @@ class RedactResponse(BaseModel):
     download_url: str | None = None
     filename: str | None = None
     local_path: str | None = None
+
+
+# ── Chat / Conversational Analysis ──────────────────────────────────
+
+
+class ChatMessage(BaseModel):
+    """A single message in the conversation."""
+
+    role: str = Field(..., description="'user' or 'assistant'")
+    content: str
+
+
+class ChatRequest(BaseModel):
+    """Request body for the chat endpoint (JSON part, file sent separately)."""
+
+    messages: list[ChatMessage] = Field(
+        default_factory=list,
+        description="Prior conversation history (excluding the current user message).",
+    )
+    scan_id: str | None = Field(
+        default=None,
+        description="If a previous scan was performed, pass the scan_id for follow-up questions.",
+    )
+
+
+class ChatResponse(BaseModel):
+    """Response from the privacy chatbot."""
+
+    reply: str = Field(..., description="The assistant's conversational response.")
+    scan_id: str | None = Field(
+        default=None,
+        description="Scan ID if a file was analyzed – can be used to redirect to redaction.",
+    )
+    has_sensitive_data: bool = Field(
+        default=False,
+        description="True if the analyzed document contains flagged entities.",
+    )
+    risk_score: float | None = Field(
+        default=None,
+        description="Overall risk score (0–1) when a file was analyzed.",
+    )
+    flagged_entities: list[FlaggedEntity] = Field(
+        default_factory=list,
+        description="Detected sensitive entities (only populated when a file is scanned).",
+    )

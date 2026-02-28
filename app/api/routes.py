@@ -9,6 +9,9 @@ from fastapi.responses import FileResponse
 from app.api.dependencies import get_pipeline
 from app.domain.contracts import ProcessOptions
 from app.domain.models import (
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
     ProcessingMode,
     ProcessingResponse,
     RedactRequest,
@@ -463,3 +466,86 @@ async def get_privacy_suggestions(
             return {"suggestions": suggestions}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate suggestions: {str(e)}")
+
+
+# ────────────────────────────────────────────────────────────────────
+# Chat / Conversational Analysis
+# ────────────────────────────────────────────────────────────────────
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(
+    message: str = Form(..., description="The user's chat message"),
+    chat_history: str = Form(
+        default="[]",
+        description='JSON array of prior messages, e.g. [{"role":"user","content":"hi"}]',
+    ),
+    scan_id: str | None = Form(
+        default=None,
+        description="Existing scan ID for follow-up questions (no file re-upload needed)",
+    ),
+    file: UploadFile | None = File(
+        default=None,
+        description="Optional file to analyze for sensitive data",
+    ),
+    use_llm: bool = Form(True),
+    pipeline: PrivacyFirewallPipeline = Depends(get_pipeline),
+):
+    """Conversational privacy assistant.
+
+    Upload a file to get it scanned and receive a natural-language analysis,
+    or ask follow-up questions about a previous scan.
+    """
+    from app.services.chatbot import ChatbotService
+
+    chatbot = ChatbotService(pipeline.contextual.settings)
+
+    # Parse conversation history
+    history: list[ChatMessage] = []
+    try:
+        raw = json.loads(chat_history)
+        if isinstance(raw, list):
+            history = [ChatMessage(**m) for m in raw]
+    except (json.JSONDecodeError, TypeError):
+        pass  # ignore malformed history
+
+    scan_result: ScanResponse | None = None
+
+    # Case 1: File attached → run scan pipeline
+    if file is not None:
+        path = await _persist_upload(pipeline, file)
+        media_type = "document"
+        if file.content_type:
+            if file.content_type.startswith("image/"):
+                media_type = "image"
+            elif file.content_type.startswith("audio/"):
+                media_type = "audio"
+
+        if media_type == "image":
+            scan_result = await pipeline.scan_image(path, use_llm=use_llm)
+        elif media_type == "audio":
+            scan_result = await pipeline.scan_audio(path, use_llm=use_llm)
+        else:
+            scan_result = await pipeline.scan_document(path, use_llm=use_llm)
+
+    # Case 2: No file, but scan_id provided → retrieve previous scan
+    elif scan_id:
+        cached = pipeline.scan_store.get(scan_id)
+        if cached is None:
+            raise HTTPException(status_code=404, detail="Scan result not found or expired.")
+        scan_result = ScanResponse(
+            scan_id=scan_id,
+            flagged_entities=cached["flagged"],
+            risk_score=cached["risk_score"],
+            warning_message=cached.get("warning_message"),
+            recommended_redaction_plan=cached.get("recommended_plan"),
+            audit_log=cached.get("audit_log", []),
+            reasoning_trace=cached.get("reasoning_trace", []),
+        )
+
+    # Generate chatbot response
+    return await chatbot.chat(
+        user_message=message,
+        history=history,
+        scan_result=scan_result,
+    )
