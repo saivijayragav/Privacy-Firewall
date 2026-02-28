@@ -289,13 +289,14 @@ class PrivacyFirewallPipeline:
         if extraction.faces:
             for face in extraction.faces:
                 bbox = face.get("bbox")
+                page_num = face.get("page", 1)
                 if bbox:
                     entities.append(
                         DetectedEntity(
                             entity_id=uuid4().hex,
                             type="face",
                             raw_value="[face]",
-                            location_reference=LocationReference(page=1, bbox=bbox),
+                            location_reference=LocationReference(page=page_num, bbox=bbox),
                             confidence_score=0.90,
                         )
                     )
@@ -307,13 +308,14 @@ class PrivacyFirewallPipeline:
             for obj in extraction.objects:
                 if obj.get("type") == "qr_code":
                     bbox = obj.get("bbox")
+                    page_num = obj.get("page", 1)
                     if bbox:
                         entities.append(
                             DetectedEntity(
                                 entity_id=uuid4().hex,
                                 type="qr_code",
                                 raw_value="[qr_code]",
-                                location_reference=LocationReference(page=1, bbox=bbox),
+                                location_reference=LocationReference(page=page_num, bbox=bbox),
                                 confidence_score=0.95,
                             )
                         )
